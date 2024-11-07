@@ -1,0 +1,11 @@
+[package]
+name = "vidbag2mmd"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+pyo3 = { version = "0.22.5", features = ["auto-initialize"] }
+ffmpeg-next = "5.1"
+
+[dev-dependencies]
+tempfile = "3.3"
