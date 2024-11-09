@@ -133,7 +133,7 @@ impl Aligner {
         })
     }
 
-    pub async fn extract_frames(
+    async fn extract_frames(
         video_path: &str,
         output_dir: &str,
         target_frames: usize,
@@ -473,6 +473,53 @@ mod tests {
             .filter_map(|entry| entry.ok())
             .collect();
         assert_eq!(frame_files.len(), 13, "Should have extracted 13 frames");
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_convert_rosbag_to_clouds_file() -> Result<(), Box<dyn Error>> {
+        // 创建 rosbag 文件
+        let temp_dir = tempdir()?;
+        let rosbag_path = temp_dir.path().join("test.bag");
+        let rosbag_path_str = rosbag_path
+            .to_str()
+            .ok_or_else(|| format!("Cannot convert rosbag path {:?} to string", rosbag_path))?;
+
+        let pointcloud_topic = "/lidar";
+        let frame_num = 13;
+        generate_random_pointclouds(rosbag_path_str, pointcloud_topic, frame_num)?;
+
+        // 初始化 Aligner 并执行函数
+        let aligner = Aligner::new("", "", "", rosbag_path_str, &pointcloud_topic);
+        aligner.convert_rosbag_to_clouds_file(temp_dir.path().to_str().ok_or_else(|| {
+            format!(
+                "Cannot convert cloud directory path {:?} to string",
+                rosbag_path
+            )
+        })?)?;
+
+        // 检查输出目录是否生成了 5 个点云文件
+        let frame_files: Vec<_> = fs::read_dir(temp_dir.path())?
+            .filter_map(|entry| {
+                entry.ok().and_then(|e| {
+                    let path = e.path();
+                    // 检查文件是否以 .bin 结尾
+                    if path.extension().and_then(|ext| ext.to_str()) == Some("bin") {
+                        Some(path)
+                    } else {
+                        None
+                    }
+                })
+            })
+            .collect();
+
+        assert_eq!(
+            frame_files.len() as u32,
+            frame_num,
+            "Should have extracted {} frames",
+            frame_num
+        );
 
         Ok(())
     }
