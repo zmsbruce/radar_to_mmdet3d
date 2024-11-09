@@ -88,7 +88,7 @@ impl Aligner {
         Python::with_gil(|py| {
             // 定义 Python 代码
             log::debug!("Loading Python script for ROS bag frame extraction...");
-            let code = include_str!("../scripts/get_rosbag_frame_num.py");
+            let code = include_str!("../scripts/get_rosbag_frames.py");
 
             // 调用 Python 函数并传递参数
             log::debug!(
@@ -103,6 +103,33 @@ impl Aligner {
 
             // 返回结果
             Ok(result)
+        })
+    }
+
+    pub fn convert_rosbag_to_clouds_file(&self, output_dir: &str) -> Result<(), Box<dyn Error>> {
+        log::info!("Starting to convert rosbag to files if point cloud...");
+
+        Python::with_gil(|py| {
+            // 定义 Python 代码
+            log::debug!("Loading Python script for converting rosbag to files if point cloud...");
+            let code = include_str!("../scripts/extract_pointcloud.py");
+
+            // 调用 Python 函数并传递参数
+            log::debug!(
+                "Calling Python function 'process_pointclouds' with bag filename: '{}', topic: '{}' and output directory: '{}'",
+                &self.lidar_rosbag_filename,
+                &self.lidar_rosbag_topic,
+                output_dir
+            );
+            PyModule::from_code_bound(py, code, "", "")?
+                .getattr("process_pointclouds")?
+                .call1((
+                    &self.lidar_rosbag_filename,
+                    &self.lidar_rosbag_topic,
+                    output_dir,
+                ))?;
+
+            Ok(())
         })
     }
 
@@ -395,7 +422,7 @@ mod tests {
         let output_temp_dir = tempdir()?; // 使用一个不同的目录生成帧
         let output_dir = output_temp_dir.path().to_str().unwrap();
 
-        // 提取 5 帧
+        // 提取 13 帧
         Aligner::extract_frames(
             video_path
                 .to_str()
@@ -409,7 +436,7 @@ mod tests {
         let frame_files: Vec<_> = fs::read_dir(output_dir)?
             .filter_map(|entry| entry.ok())
             .collect();
-        assert_eq!(frame_files.len(), 13, "Should have extracted 5 frames");
+        assert_eq!(frame_files.len(), 13, "Should have extracted 13 frames");
 
         Ok(())
     }
