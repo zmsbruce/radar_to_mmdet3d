@@ -112,17 +112,17 @@ impl Aligner {
         Python::with_gil(|py| {
             // 定义 Python 代码
             log::debug!("Loading Python script for converting rosbag to files if point cloud...");
-            let code = include_str!("../scripts/extract_pointcloud.py");
+            let code = include_str!("../scripts/extract_pointclouds.py");
 
             // 调用 Python 函数并传递参数
             log::debug!(
-                "Calling Python function 'process_pointclouds' with bag filename: '{}', topic: '{}' and output directory: '{}'",
+                "Calling Python function 'extract_pointclouds' with bag filename: '{}', topic: '{}' and output directory: '{}'",
                 &self.lidar_rosbag_filename,
                 &self.lidar_rosbag_topic,
                 output_dir
             );
             PyModule::from_code_bound(py, code, "", "")?
-                .getattr("process_pointclouds")?
+                .getattr("extract_pointclouds")?
                 .call1((
                     &self.lidar_rosbag_filename,
                     &self.lidar_rosbag_topic,

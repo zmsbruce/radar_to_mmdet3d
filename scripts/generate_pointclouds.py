@@ -4,31 +4,22 @@ import numpy as np
 from sensor_msgs.msg import PointCloud2, PointField
 import struct
 import time
-import logging
 
 
 # Function to write random pointcloud data to a bag file
-def write_random_pointcloud_bag(bag_file, topic_name, num_frames=5):
-    # Set up logging
-    logging.basicConfig(
-        # Set the logging level (DEBUG, INFO, WARNING, ERROR, CRITICAL)
-        level=logging.DEBUG,
-        # Log format: timestamp [log level] message
-        format='%(asctime)s [%(levelname)s] %(message)s',
-        datefmt='%Y-%m-%d %H:%M:%S',
-    )
+def write_random_pointcloud_bag(bag_file, topic_name, num_frames):
+    rospy.init_node('write_pointcloud_bag', anonymous=True)
+    print('Rospy initialized.')
 
-    logger = logging.getLogger(__name__)
-
-    logger.info(f"Creating bag file: {bag_file}")
+    print(f"Creating bag file: {bag_file}")
 
     with rosbag.Bag(bag_file, 'w') as bag:
         for i in range(num_frames):
-            logger.info(f"Generating frame {i+1}/{num_frames}")
+            print(f"Generating frame {i+1}/{num_frames}")
 
             # Generate a new frame of point cloud data
             num_points = 10
-            logger.info(f"Generating point cloud with {num_points} points.")
+            print(f"Generating point cloud with {num_points} points.")
 
             fields = [
                 PointField('x', 0, PointField.FLOAT32, 1),
@@ -59,14 +50,12 @@ def write_random_pointcloud_bag(bag_file, topic_name, num_frames=5):
             point_cloud_msg.is_dense = True  # No invalid points
             point_cloud_msg.data = b''.join(cloud_data)
 
-            logger.debug(f"Generated point cloud with {len(points)} points.")
-
             # Write the point cloud message to the bag under the specified topic
-            logger.info(
+            print(
                 f"Writing frame {i+1}/{num_frames} to topic {topic_name}")
             bag.write(topic_name, point_cloud_msg, rospy.Time.now())
 
             # Sleep briefly between frames to simulate time progression
             time.sleep(0.1)  # 100ms delay between frames
 
-    logger.info(f"Finished writing {num_frames} frames to {bag_file}")
+    print(f"Finished writing {num_frames} frames to {bag_file}")
