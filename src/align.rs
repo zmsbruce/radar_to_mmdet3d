@@ -365,14 +365,50 @@ mod tests {
 
     use super::*;
 
+    fn generate_random_pointclouds(
+        bag_path: &str,
+        pointcloud_topic: &str,
+        frame_num: u32,
+    ) -> Result<(), Box<dyn Error>> {
+        // 使用 spawn 异步启动 roscore
+        let mut roscore = Command::new("roscore").spawn()?;
+
+        Python::with_gil(|py| -> Result<(), Box<dyn Error>> {
+            let code = include_str!("../scripts/generate_pointclouds.py");
+
+            // 调用 Python 函数并传递参数
+            PyModule::from_code_bound(py, code, "", "")?
+                .getattr("write_random_pointcloud_bag")?
+                .call1((bag_path, pointcloud_topic, frame_num))?;
+
+            Ok(())
+        })?;
+
+        roscore.kill()?;
+        Ok(())
+    }
+
     #[test]
     fn test_get_rosbag_frame_num() -> Result<(), Box<dyn Error>> {
-        let filename = "assets/test/test.bag"; // A bag with 10 frames of /lidar and 8 frames of /camera
-        let lidar_topic = "/lidar";
+        // 创建临时目录用于保存 bag 文件
+        let temp_dir = tempdir()?;
+        let rosbag_path = temp_dir.path().join("test.bag");
+        let rosbag_path_str = rosbag_path
+            .to_str()
+            .ok_or_else(|| format!("Cannot convert rosbag path {:?} to string", rosbag_path))?;
 
-        let aligner = Aligner::new("", "", "", &filename, &lidar_topic);
+        // 使用 Python 创建 Rosbag 文件
+        let lidar_topic = "/lidar";
+        let num_frame = 10;
+        generate_random_pointclouds(rosbag_path_str, &lidar_topic, num_frame)?;
+
+        let aligner = Aligner::new("", "", "", rosbag_path_str, lidar_topic);
         let frame_count = aligner.get_rosbag_frame_num()?;
-        assert_eq!(frame_count, 10, "Frame count should be 10");
+        assert_eq!(
+            frame_count, num_frame,
+            "Frame count should be {}",
+            num_frame
+        );
 
         Ok(())
     }
