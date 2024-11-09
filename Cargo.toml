@@ -5,7 +5,11 @@ edition = "2021"
 
 [dependencies]
 pyo3 = { version = "0.22.5", features = ["auto-initialize"] }
-ffmpeg-next = "5.1"
+ffmpeg-next = "5.0"
+image = "0.25.5"
+log = "0.4"
+env_logger = "0.10"
+tokio = { version = "1.41.1", features = ["full"] }
 
 [dev-dependencies]
 tempfile = "3.3"
