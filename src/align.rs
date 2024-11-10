@@ -360,19 +360,34 @@ impl Aligner {
 
 #[cfg(test)]
 mod tests {
-    use std::{error::Error, fs, process::Command};
+    use serial_test::serial;
+    use std::{error::Error, fs, process::Command, thread, time::Duration};
     use tempfile::tempdir;
 
     use super::*;
+
+    fn launch_roscore() -> Result<(), Box<dyn Error>> {
+        // 查找是否存在 roscore，有则 kill
+        let output = Command::new("pgrep").arg("roscore").output();
+        if let Ok(output) = output {
+            let pid_str = String::from_utf8_lossy(&output.stdout);
+            if !pid_str.trim().is_empty() {
+                return Ok(());
+            }
+        }
+
+        // 使用 spawn 异步启动 roscore
+        let _roscore = Command::new("roscore").spawn()?;
+        thread::sleep(Duration::from_secs(2));
+
+        Ok(())
+    }
 
     fn generate_random_pointclouds(
         bag_path: &str,
         pointcloud_topic: &str,
         frame_num: u32,
     ) -> Result<(), Box<dyn Error>> {
-        // 使用 spawn 异步启动 roscore
-        let mut roscore = Command::new("roscore").spawn()?;
-
         Python::with_gil(|py| -> Result<(), Box<dyn Error>> {
             let code = include_str!("../scripts/generate_pointclouds.py");
 
@@ -383,12 +398,11 @@ mod tests {
 
             Ok(())
         })?;
-
-        roscore.kill()?;
         Ok(())
     }
 
     #[test]
+    #[serial]
     fn test_get_rosbag_frame_num() -> Result<(), Box<dyn Error>> {
         // 创建临时目录用于保存 bag 文件
         let temp_dir = tempdir()?;
@@ -398,6 +412,7 @@ mod tests {
             .ok_or_else(|| format!("Cannot convert rosbag path {:?} to string", rosbag_path))?;
 
         // 使用 Python 创建 Rosbag 文件
+        launch_roscore()?;
         let lidar_topic = "/lidar";
         let num_frame = 10;
         generate_random_pointclouds(rosbag_path_str, &lidar_topic, num_frame)?;
@@ -478,6 +493,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_convert_rosbag_to_clouds_file() -> Result<(), Box<dyn Error>> {
         // 创建 rosbag 文件
         let temp_dir = tempdir()?;
@@ -486,6 +502,7 @@ mod tests {
             .to_str()
             .ok_or_else(|| format!("Cannot convert rosbag path {:?} to string", rosbag_path))?;
 
+        launch_roscore()?;
         let pointcloud_topic = "/lidar";
         let frame_num = 13;
         generate_random_pointclouds(rosbag_path_str, pointcloud_topic, frame_num)?;
@@ -520,7 +537,6 @@ mod tests {
             "Should have extracted {} frames",
             frame_num
         );
-
         Ok(())
     }
 }
