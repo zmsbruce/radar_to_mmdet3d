@@ -8,8 +8,11 @@ import time
 
 # Function to write random pointcloud data to a bag file
 def write_random_pointcloud_bag(bag_file, topic_name, num_frames):
-    rospy.init_node('write_pointcloud_bag', anonymous=True)
-    print('Rospy initialized.')
+    try:
+        rospy.init_node('vidbag2mmd', anonymous=True)
+        print('Ros node initialized.')
+    except rospy.exceptions.ROSException:
+        print('Node has already been initialized.')
 
     print(f"Creating bag file: {bag_file}")
 
