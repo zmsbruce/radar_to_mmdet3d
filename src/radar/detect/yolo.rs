@@ -1,9 +1,15 @@
 use anyhow::{anyhow, Context, Result};
+use font_kit::{properties::Properties, source::SystemSource};
 use image::{imageops::FilterType, DynamicImage, GenericImageView};
 use ndarray::{s, Array2, Array4, Axis};
 use ort::{
     inputs, CUDAExecutionProvider, GraphOptimizationLevel, OpenVINOExecutionProvider, Session,
     TensorRTExecutionProvider,
+};
+use raqote::{DrawOptions, DrawTarget, LineJoin, PathBuilder, SolidSource, Source, StrokeStyle};
+use show_image::{
+    event::{VirtualKeyCode, WindowEvent},
+    AsImageView, WindowOptions,
 };
 use tracing::{debug, error, info, span, trace, Level};
 
@@ -28,11 +34,10 @@ pub struct Yolo {
     input_size: (u32, u32),
     onnx_path: String,
     model: Option<Session>,
-    image_size: (u32, u32),
 }
 
 #[derive(Debug)]
-pub enum ExecutionProvider {
+pub enum Execution {
     TensorRT,
     CUDA,
     OpenVINO,
@@ -59,23 +64,22 @@ impl Yolo {
             input_size,
             onnx_path: onnx_path.to_string(),
             model: None,
-            image_size: (1, 1),
         }
     }
 
-    pub fn build(mut self, execution: ExecutionProvider) -> Result<Self> {
+    pub fn build(mut self, execution: Execution) -> Result<Self> {
         let span = span!(Level::TRACE, "Yolo::build");
         let _enter = span.enter();
 
         info!(
-            "Building the ONNX model from file: {} and execution provider: {:?}",
+            "Building the ONNX model from file: {} and execution: {:?}",
             self.onnx_path, execution
         );
         let providers = match execution {
-            ExecutionProvider::TensorRT => vec![TensorRTExecutionProvider::default().build()],
-            ExecutionProvider::CUDA => vec![CUDAExecutionProvider::default().build()],
-            ExecutionProvider::OpenVINO => vec![OpenVINOExecutionProvider::default().build()],
-            ExecutionProvider::CPU => vec![],
+            Execution::TensorRT => vec![TensorRTExecutionProvider::default().build()],
+            Execution::CUDA => vec![CUDAExecutionProvider::default().build()],
+            Execution::OpenVINO => vec![OpenVINOExecutionProvider::default().build()],
+            Execution::CPU => vec![],
             _ => vec![
                 TensorRTExecutionProvider::default().build(),
                 CUDAExecutionProvider::default().build(),
@@ -97,7 +101,7 @@ impl Yolo {
         Ok(self)
     }
 
-    pub fn infer(&mut self, image: &DynamicImage) -> Result<Vec<Detection>> {
+    pub fn infer(&self, image: &DynamicImage) -> Result<Vec<Detection>> {
         let span = span!(Level::TRACE, "Yolo::infer");
         let _enter = span.enter();
 
@@ -116,7 +120,7 @@ impl Yolo {
             .context("Failed to run inference")?;
         trace!("Inference completed, raw model output received.");
 
-        let detections = self.process_yolov8_output(model_output);
+        let detections = self.process_yolov8_output(model_output, original_dims);
         trace!(
             "Processed YOLOv8 output, number of detections: {}",
             detections.len()
@@ -125,11 +129,105 @@ impl Yolo {
         Ok(detections)
     }
 
-    fn preprocess_image(&mut self, image: &DynamicImage) -> Result<(Array4<f32>, (u32, u32))> {
+    #[allow(unused)]
+    pub fn visualize(img: &DynamicImage, dets: &Vec<Detection>) -> Result<()> {
+        let (width, height) = img.dimensions();
+        let mut dt = DrawTarget::new(width as i32, height as i32);
+        for det in dets {
+            let bbox = &det.bbox;
+
+            let mut pb = PathBuilder::new();
+            pb.rect(
+                bbox.x_center - bbox.width / 2.0,
+                bbox.y_center - bbox.height / 2.0,
+                bbox.width,
+                bbox.height,
+            );
+            let path = pb.finish();
+
+            let color = Self::get_color_for_class(det.class_id as usize);
+            dt.stroke(
+                &path,
+                &Source::Solid(color),
+                &StrokeStyle {
+                    join: LineJoin::Round,
+                    width: 4.,
+                    ..StrokeStyle::default()
+                },
+                &DrawOptions::default(),
+            );
+
+            let text = format!("{}: {:.2}", det.class_id, det.confidence);
+            let text_x = bbox.x_center - bbox.width / 2.0;
+            let text_y = bbox.y_center - bbox.height / 2.0;
+            let font = SystemSource::new()
+                .select_best_match(
+                    &[font_kit::family_name::FamilyName::SansSerif],
+                    &Properties::default(),
+                )
+                .context("Failed to select font")?
+                .load()
+                .context("Failed to load font")?;
+
+            dt.draw_text(
+                &font,
+                40.0,
+                &text,
+                (text_x, text_y).into(),
+                &Source::Solid(SolidSource {
+                    r: 0xFF,
+                    g: 0xFF,
+                    b: 0xFF,
+                    a: 0xFF,
+                }),
+                &DrawOptions::default(),
+            );
+        }
+
+        let overlay: show_image::Image = dt.into();
+
+        let img = img.clone();
+        let window = show_image::context().run_function_wait(move |context| -> Result<_> {
+            let mut window = context
+                .create_window(
+                    "vis",
+                    WindowOptions {
+                        size: Some([width, height]),
+                        ..WindowOptions::default()
+                    },
+                )
+                .context("Failed to create window")?;
+            window.set_image(
+                "picture",
+                &img.as_image_view()
+                    .context("Failed to image view of original image")?,
+            );
+            window.set_overlay(
+                "yolo",
+                &overlay
+                    .as_image_view()
+                    .context("Failed to set image view of overlay")?,
+                true,
+            );
+            Ok(window.proxy())
+        })?;
+
+        for event in window.event_channel().unwrap() {
+            if let WindowEvent::KeyboardInput(event) = event {
+                if event.input.key_code == Some(VirtualKeyCode::Escape)
+                    && event.input.state.is_pressed()
+                {
+                    break;
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    fn preprocess_image(&self, image: &DynamicImage) -> Result<(Array4<f32>, (u32, u32))> {
         let span = span!(Level::TRACE, "Yolo::preprocess_image");
         let _enter = span.enter();
-
-        self.image_size = (image.width(), image.height());
 
         let original_dims = image.dimensions();
         let (width, height) = self.input_size;
@@ -181,7 +279,7 @@ impl Yolo {
         }
     }
 
-    fn process_yolov8_output(&self, output: Array2<f32>) -> Vec<Detection> {
+    fn process_yolov8_output(&self, output: Array2<f32>, image_size: (u32, u32)) -> Vec<Detection> {
         let span = span!(Level::TRACE, "Yolo::process_yolov8_output");
         let _enter = span.enter();
 
@@ -214,7 +312,7 @@ impl Yolo {
             }
 
             let (input_width, input_height) = self.input_size;
-            let (image_width, image_height) = self.image_size;
+            let (image_width, image_height) = image_size;
 
             detections.push(Detection {
                 bbox: BBox {
@@ -281,17 +379,52 @@ impl Yolo {
 
         inter_area / (bbox1_area + bbox2_area - inter_area)
     }
+
+    fn hsv_to_rgb(h: f32, s: f32, v: f32) -> (u8, u8, u8) {
+        let i = (h * 6.0).floor() as i32;
+        let f = h * 6.0 - i as f32;
+        let p = v * (1.0 - s);
+        let q = v * (1.0 - f * s);
+        let t = v * (1.0 - (1.0 - f) * s);
+
+        let (r, g, b) = match i % 6 {
+            0 => (v, t, p),
+            1 => (q, v, p),
+            2 => (p, v, t),
+            3 => (p, q, v),
+            4 => (t, p, v),
+            5 => (v, p, q),
+            _ => (1.0, 1.0, 1.0), // 默认白色
+        };
+
+        ((r * 255.0) as u8, (g * 255.0) as u8, (b * 255.0) as u8)
+    }
+
+    fn get_color_for_class(class_id: usize) -> SolidSource {
+        let num_classes = 84;
+        let hue = (class_id as f32 / num_classes as f32) % 1.0;
+        let (r, g, b) = Self::hsv_to_rgb(hue, 0.7, 0.9);
+
+        SolidSource {
+            r,
+            g,
+            b,
+            a: 0xFF, // 不透明
+        }
+    }
 }
 
 #[cfg(test)]
 mod tests {
+    use std::{path::PathBuf, str::FromStr};
+
     use super::*;
+    use anyhow::Ok;
     use assert_approx_eq::assert_approx_eq;
     use image::RgbImage;
-    use std::error::Error;
 
     #[test]
-    fn test_preprocess_image() -> Result<(), Box<dyn Error>> {
+    fn test_preprocess_image() -> Result<()> {
         let img_buffer = RgbImage::from_fn(4, 4, |x, y| {
             if (x + y) % 2 == 0 {
                 image::Rgb([255, 0, 0])
@@ -300,7 +433,7 @@ mod tests {
             }
         });
 
-        let mut yolo = Yolo::new(0.0, 0.0, (2, 2), "");
+        let yolo = Yolo::new(0.0, 0.0, (2, 2), "");
         let dynamic_image = DynamicImage::ImageRgb8(img_buffer);
         let (processed_array, original_dims) = yolo.preprocess_image(&dynamic_image)?;
 
@@ -311,7 +444,7 @@ mod tests {
 
         let processed_data = processed_array
             .as_slice()
-            .ok_or_else(|| format!("Failed to convert {:?} to slice", processed_array))?;
+            .ok_or_else(|| anyhow!("Failed to convert {:?} to slice", processed_array))?;
 
         for &val in processed_data {
             assert!(val >= 0.0 && val <= 1.0, "Pixel value out of range: {val}");
@@ -502,7 +635,7 @@ mod tests {
         let nms_threshold = 0.4;
         let yolo = Yolo::new(conf_threshold, nms_threshold, (1, 1), "");
 
-        let detections = yolo.process_yolov8_output(mock_output);
+        let detections = yolo.process_yolov8_output(mock_output, (1, 1));
 
         assert_eq!(detections.len(), 2, "Incorrect size of detections");
 
@@ -511,5 +644,18 @@ mod tests {
 
         assert!(detections[0].bbox.x_center > 0.5);
         assert!(detections[1].bbox.x_center < 0.5);
+    }
+
+    #[test]
+    fn test_yolo() -> Result<()> {
+        let yolo =
+            Yolo::new(0.5, 0.75, (640, 640), "assets/test/yolov8n.onnx").build(Execution::CPU)?;
+
+        let img = image::open(PathBuf::from_str("assets/test/zidane.jpg")?)?;
+        let detections = yolo.infer(&img)?;
+
+        assert!(detections.len() > 0);
+
+        Ok(())
     }
 }
