@@ -134,7 +134,7 @@ impl Yolo {
         let (width, height) = img.dimensions();
         let mut dt = DrawTarget::new(width as i32, height as i32);
 
-        let font_data = include_bytes!("../../../assets/fonts/NotoSans-Regular.ttf") as &[u8];
+        let font_data = include_bytes!("../../../assets/NotoSans-Regular.ttf") as &[u8];
         let font = Font::try_from_bytes(font_data).context("Failed to load font")?;
         let font_scale = Scale::uniform(40.0);
         let v_metrics = font.v_metrics(font_scale);
