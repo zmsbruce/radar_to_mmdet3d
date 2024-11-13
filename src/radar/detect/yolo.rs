@@ -1,5 +1,4 @@
 use anyhow::{anyhow, Context, Result};
-use font_kit::{properties::Properties, source::SystemSource};
 use image::{imageops::FilterType, DynamicImage, GenericImageView};
 use ndarray::{s, Array2, Array4, Axis};
 use ort::{
@@ -7,6 +6,7 @@ use ort::{
     TensorRTExecutionProvider,
 };
 use raqote::{DrawOptions, DrawTarget, LineJoin, PathBuilder, SolidSource, Source, StrokeStyle};
+use rusttype::{point, Font, Scale};
 use show_image::{
     event::{VirtualKeyCode, WindowEvent},
     AsImageView, WindowOptions,
@@ -133,6 +133,12 @@ impl Yolo {
     pub fn visualize(img: &DynamicImage, dets: &Vec<Detection>) -> Result<()> {
         let (width, height) = img.dimensions();
         let mut dt = DrawTarget::new(width as i32, height as i32);
+
+        let font_data = include_bytes!("../../../assets/fonts/NotoSans-Regular.ttf") as &[u8];
+        let font = Font::try_from_bytes(font_data).context("Failed to load font")?;
+        let font_scale = Scale::uniform(40.0);
+        let v_metrics = font.v_metrics(font_scale);
+
         for det in dets {
             let bbox = &det.bbox;
 
@@ -158,30 +164,34 @@ impl Yolo {
             );
 
             let text = format!("{}: {:.2}", det.class_id, det.confidence);
+
             let text_x = bbox.x_center - bbox.width / 2.0;
             let text_y = bbox.y_center - bbox.height / 2.0;
-            let font = SystemSource::new()
-                .select_best_match(
-                    &[font_kit::family_name::FamilyName::SansSerif],
-                    &Properties::default(),
-                )
-                .context("Failed to select font")?
-                .load()
-                .context("Failed to load font")?;
+            let offset = point(text_x + 10.0, text_y + v_metrics.ascent);
 
-            dt.draw_text(
-                &font,
-                40.0,
-                &text,
-                (text_x, text_y).into(),
-                &Source::Solid(SolidSource {
-                    r: 0xFF,
-                    g: 0xFF,
-                    b: 0xFF,
-                    a: 0xFF,
-                }),
-                &DrawOptions::default(),
-            );
+            let glyphs: Vec<_> = font.layout(&text, font_scale, offset).collect();
+            for glyph in glyphs {
+                if let Some(bbox) = glyph.pixel_bounding_box() {
+                    glyph.draw(|x, y, v| {
+                        dt.fill_rect(
+                            (x as i32 + bbox.min.x) as f32,
+                            (y as i32 + bbox.min.y) as f32,
+                            1.0,
+                            1.0,
+                            &Source::Solid(SolidSource {
+                                r: 0xff,
+                                g: 0xff,
+                                b: 0xff,
+                                a: 0xff,
+                            }),
+                            &DrawOptions {
+                                alpha: v,
+                                ..DrawOptions::default()
+                            },
+                        );
+                    });
+                }
+            }
         }
 
         let overlay: show_image::Image = dt.into();
