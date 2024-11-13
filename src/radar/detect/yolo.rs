@@ -1,3 +1,5 @@
+use std::fmt::Debug;
+
 use anyhow::{anyhow, Context, Result};
 use image::{imageops::FilterType, DynamicImage, GenericImageView};
 use ndarray::{s, Array2, Array4, Axis};
@@ -11,21 +13,30 @@ use show_image::{
     event::{VirtualKeyCode, WindowEvent},
     AsImageView, WindowOptions,
 };
-use tracing::{debug, error, info, span, trace, Level};
+use tracing::{debug, error, info, span, trace, warn, Level};
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct BBox {
-    x_center: f32,
-    y_center: f32,
-    width: f32,
-    height: f32,
+    pub x_center: f32,
+    pub y_center: f32,
+    pub width: f32,
+    pub height: f32,
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Detection {
-    bbox: BBox,
-    confidence: f32,
-    class_id: u32,
+    pub bbox: BBox,
+    pub confidence: f32,
+    pub class_id: u32,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum Execution {
+    TensorRT,
+    CUDA,
+    OpenVINO,
+    CPU,
+    Default,
 }
 
 pub struct Yolo {
@@ -36,21 +47,31 @@ pub struct Yolo {
     model: Option<Session>,
 }
 
-#[derive(Debug)]
-pub enum Execution {
-    TensorRT,
-    CUDA,
-    OpenVINO,
-    CPU,
-    Default,
+impl Debug for Yolo {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Yolo")
+            .field("conf_threshold", &self.conf_threshold)
+            .field("nms_threshold", &self.nms_threshold)
+            .field("input_size", &self.input_size)
+            .field("onnx_path", &self.onnx_path)
+            .field(
+                "model",
+                &if self.model.is_some() {
+                    "Initialized"
+                } else {
+                    "Unset"
+                },
+            )
+            .finish()
+    }
 }
 
 impl Yolo {
     pub fn new(
+        onnx_path: &str,
         conf_threshold: f32,
         nms_threshold: f32,
         input_size: (u32, u32),
-        onnx_path: &str,
     ) -> Self {
         let span = span!(Level::TRACE, "Yolo::new");
         let _enter = span.enter();
@@ -67,7 +88,17 @@ impl Yolo {
         }
     }
 
+    #[inline]
+    pub fn is_session_built(&self) -> bool {
+        self.model.is_some()
+    }
+
     pub fn build(mut self, execution: Execution) -> Result<Self> {
+        if self.model.is_some() {
+            warn!("Yolo {:#?} has already been built.", self);
+            return Ok(self);
+        }
+
         let span = span!(Level::TRACE, "Yolo::build");
         let _enter = span.enter();
 
@@ -443,7 +474,7 @@ mod tests {
             }
         });
 
-        let yolo = Yolo::new(0.0, 0.0, (2, 2), "");
+        let yolo = Yolo::new("", 0.0, 0.0, (2, 2));
         let dynamic_image = DynamicImage::ImageRgb8(img_buffer);
         let (processed_array, original_dims) = yolo.preprocess_image(&dynamic_image)?;
 
@@ -601,7 +632,7 @@ mod tests {
         let detections = vec![detection1, detection2, detection3];
 
         let nms_threshold = 0.3;
-        let yolo = Yolo::new(0.0, nms_threshold, (0, 0), "");
+        let yolo = Yolo::new("", 0.0, nms_threshold, (0, 0));
         let final_detections = yolo.non_max_suppression(detections);
 
         assert_eq!(
@@ -643,7 +674,7 @@ mod tests {
 
         let conf_threshold = 0.5;
         let nms_threshold = 0.4;
-        let yolo = Yolo::new(conf_threshold, nms_threshold, (1, 1), "");
+        let yolo = Yolo::new("", conf_threshold, nms_threshold, (1, 1));
 
         let detections = yolo.process_yolov8_output(mock_output, (1, 1));
 
@@ -659,7 +690,7 @@ mod tests {
     #[test]
     fn test_yolo() -> Result<()> {
         let yolo =
-            Yolo::new(0.5, 0.75, (640, 640), "assets/test/yolov8n.onnx").build(Execution::CPU)?;
+            Yolo::new("assets/test/yolov8n.onnx", 0.5, 0.75, (640, 640)).build(Execution::CPU)?;
 
         let img = image::open(PathBuf::from_str("assets/test/zidane.jpg")?)?;
         let detections = yolo.infer(&img)?;
