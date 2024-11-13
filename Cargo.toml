@@ -12,6 +12,7 @@ tracing-subscriber = { version = "0.3", features = [ "env-filter", "fmt" ] }
 anyhow = "1.0"
 raqote = "0.8.5"
 show-image = { version = "0.14.0", features = [ "image", "raqote" ] }
+font-kit = "0.14"
 
 [dev-dependencies]
 tempfile = "3.3"

@@ -1501,6 +1501,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "assert_approx_eq",
+ "font-kit",
  "image",
  "ndarray",
  "ort",
