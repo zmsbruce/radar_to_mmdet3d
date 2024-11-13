@@ -1,5 +1,5 @@
 [package]
-name = "mm3dgen"
+name = "mmdet3dgen"
 version = "0.1.0"
 edition = "2021"
 
@@ -13,6 +13,7 @@ anyhow = "1.0"
 raqote = "0.8.5"
 show-image = { version = "0.14.0", features = [ "image", "raqote" ] }
 rusttype = "0.9"
+nalgebra = "0.33.2"
 
 [dev-dependencies]
 tempfile = "3.3"
