@@ -4,11 +4,11 @@ use anyhow::Result;
 use image::DynamicImage;
 use nalgebra::Point3;
 
-use detect::{BBox, RobotDetector};
+use detect::{BBox, RobotDetector, RobotLabel};
 
 #[derive(Debug)]
 pub struct RdltResult {
-    class_id: u32,
+    label: RobotLabel,
     bbox: BBox,
     confidence: f32,
     location: Point3<f32>,
@@ -35,7 +35,7 @@ impl Radar {
             .detect(&image)?
             .into_iter()
             .map(|det| RdltResult {
-                class_id: det.class_id,
+                label: det.label,
                 bbox: det.bbox(),
                 confidence: det.confidence,
                 location: Point3::default(),

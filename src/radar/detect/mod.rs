@@ -2,18 +2,56 @@ mod yolo;
 
 use std::{cmp::Ordering, collections::HashMap};
 
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 use image::DynamicImage;
 use tracing::{debug, info, span, trace, Level};
 
 pub use yolo::{BBox, Execution};
 use yolo::{Detection, Yolo};
 
+#[derive(Debug, PartialEq, Eq, Hash, Clone, Copy)]
+pub enum RobotLabel {
+    BlueHero,
+    BlueEngineer,
+    BlueInfantryThree,
+    BlueInfantryFour,
+    BlueInfantryFive,
+    RedHero,
+    RedEngineer,
+    RedInfantryThree,
+    RedInfantryFour,
+    RedInfantryFive,
+    BlueSentry,
+    RedSentry,
+}
+
+impl TryFrom<u32> for RobotLabel {
+    type Error = anyhow::Error;
+
+    fn try_from(value: u32) -> std::result::Result<Self, Self::Error> {
+        match value {
+            0 => Ok(RobotLabel::BlueHero),
+            1 => Ok(RobotLabel::BlueEngineer),
+            2 => Ok(RobotLabel::BlueInfantryThree),
+            3 => Ok(RobotLabel::BlueInfantryFour),
+            4 => Ok(RobotLabel::BlueInfantryFive),
+            5 => Ok(RobotLabel::RedHero),
+            6 => Ok(RobotLabel::RedEngineer),
+            7 => Ok(RobotLabel::RedInfantryThree),
+            8 => Ok(RobotLabel::RedInfantryFour),
+            9 => Ok(RobotLabel::RedInfantryFive),
+            10 => Ok(RobotLabel::BlueSentry),
+            11 => Ok(RobotLabel::RedSentry),
+            _ => Err(anyhow!("Invalid value for RobotLabel")),
+        }
+    }
+}
+
 #[derive(Debug)]
 pub struct RobotDetection {
     pub armor_detection: Vec<Detection>,
     pub car_detection: Detection,
-    pub class_id: u32,
+    pub label: RobotLabel,
     pub confidence: f32,
 }
 
@@ -61,7 +99,7 @@ impl RobotDetection {
             Some(Self {
                 armor_detection,
                 car_detection,
-                class_id,
+                label: RobotLabel::try_from(class_id).ok()?,
                 confidence,
             })
         } else {
@@ -115,7 +153,7 @@ impl RobotDetector {
     }
 
     pub fn with_defaults(car_onnx_path: &str, armor_onnx_path: &str) -> Result<Self> {
-        const DEFAULT_CAR_CONF_THRESH: f32 = 0.40;
+        const DEFAULT_CAR_CONF_THRESH: f32 = 0.30;
         const DEFAULT_ARMOR_CONF_THRESH: f32 = 0.65;
         const DEFAULT_CAR_NMS_THRESH: f32 = 0.50;
         const DEFAULT_ARMOR_NMS_THRESH: f32 = 0.75;
@@ -183,7 +221,7 @@ impl RobotDetector {
 
         assert_eq!(car_detections.len(), armor_detections.len());
 
-        let mut robots_map: HashMap<u32, RobotDetection> =
+        let mut robots_map: HashMap<RobotLabel, RobotDetection> =
             HashMap::with_capacity(car_detections.len());
         for (i, (car_det, armor_det)) in car_detections
             .into_iter()
@@ -197,25 +235,25 @@ impl RobotDetector {
             );
             if let Some(robot_det) = RobotDetection::new(car_det, armor_det) {
                 debug!(
-                    "Car {} classified as class_id {} with confidence {}.",
+                    "Car {} classified as label {:?} with confidence {}.",
                     i + 1,
-                    robot_det.class_id,
+                    robot_det.label,
                     robot_det.confidence
                 );
-                if let Some(robot_det_exist) = robots_map.get(&robot_det.class_id) {
+                if let Some(robot_det_exist) = robots_map.get(&robot_det.label) {
                     if robot_det_exist.confidence < robot_det.confidence {
                         debug!(
-                            "Updating class_id {} with higher confidence: {} -> {}.",
-                            robot_det.class_id, robot_det_exist.confidence, robot_det.confidence
+                            "Updating label {:?} with higher confidence: {} -> {}.",
+                            robot_det.label, robot_det_exist.confidence, robot_det.confidence
                         );
-                        robots_map.insert(robot_det.class_id, robot_det);
+                        robots_map.insert(robot_det.label, robot_det);
                     }
                 } else {
                     debug!(
-                        "Inserting new detection for class_id {} with confidence {}.",
-                        robot_det.class_id, robot_det.confidence
+                        "Inserting new detection for label {:?} with confidence {}.",
+                        robot_det.label, robot_det.confidence
                     );
-                    robots_map.insert(robot_det.class_id, robot_det);
+                    robots_map.insert(robot_det.label, robot_det);
                 }
             } else {
                 trace!("No valid robot detection for car {}.", i + 1);
