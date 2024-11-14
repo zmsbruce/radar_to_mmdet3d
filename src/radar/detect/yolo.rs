@@ -7,13 +7,10 @@ use ort::{
     inputs, CUDAExecutionProvider, GraphOptimizationLevel, OpenVINOExecutionProvider, Session,
     TensorRTExecutionProvider,
 };
-use raqote::{DrawOptions, DrawTarget, LineJoin, PathBuilder, SolidSource, Source, StrokeStyle};
-use rusttype::{point, Font, Scale};
-use show_image::{
-    event::{VirtualKeyCode, WindowEvent},
-    AsImageView, WindowOptions,
-};
+use raqote::{DrawTarget, SolidSource};
 use tracing::{debug, error, info, span, trace, warn, Level};
+
+use super::vis::{draw_rect_on_draw_target, draw_text_on_draw_target};
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct BBox {
@@ -112,9 +109,9 @@ impl Yolo {
             Execution::OpenVINO => vec![OpenVINOExecutionProvider::default().build()],
             Execution::CPU => vec![],
             _ => vec![
-                TensorRTExecutionProvider::default().build(),
                 CUDAExecutionProvider::default().build(),
                 OpenVINOExecutionProvider::default().build(),
+                TensorRTExecutionProvider::default().build(),
             ],
         };
 
@@ -165,102 +162,26 @@ impl Yolo {
         let (width, height) = img.dimensions();
         let mut dt = DrawTarget::new(width as i32, height as i32);
 
-        let font_data = include_bytes!("../../../assets/NotoSans-Regular.ttf") as &[u8];
-        let font = Font::try_from_bytes(font_data).context("Failed to load font")?;
-        let font_scale = Scale::uniform(40.0);
-        let v_metrics = font.v_metrics(font_scale);
-
-        for det in dets {
-            let bbox = &det.bbox;
-
-            let mut pb = PathBuilder::new();
-            pb.rect(
-                bbox.x_center - bbox.width / 2.0,
-                bbox.y_center - bbox.height / 2.0,
-                bbox.width,
-                bbox.height,
-            );
-            let path = pb.finish();
-
-            let color = Self::get_color_for_class(det.class_id as usize);
-            dt.stroke(
-                &path,
-                &Source::Solid(color),
-                &StrokeStyle {
-                    join: LineJoin::Round,
-                    width: 4.,
-                    ..StrokeStyle::default()
-                },
-                &DrawOptions::default(),
+        for detection in dets {
+            let bbox = detection.bbox;
+            draw_rect_on_draw_target(
+                &mut dt,
+                &bbox,
+                Self::get_color_for_class(detection.class_id as usize),
+                4.,
             );
 
-            let text = format!("{}: {:.2}", det.class_id, det.confidence);
-
-            let text_x = bbox.x_center - bbox.width / 2.0;
-            let text_y = bbox.y_center - bbox.height / 2.0;
-            let offset = point(text_x + 10.0, text_y + v_metrics.ascent);
-
-            let glyphs: Vec<_> = font.layout(&text, font_scale, offset).collect();
-            for glyph in glyphs {
-                if let Some(bbox) = glyph.pixel_bounding_box() {
-                    glyph.draw(|x, y, v| {
-                        dt.fill_rect(
-                            (x as i32 + bbox.min.x) as f32,
-                            (y as i32 + bbox.min.y) as f32,
-                            1.0,
-                            1.0,
-                            &Source::Solid(SolidSource {
-                                r: 0xff,
-                                g: 0xff,
-                                b: 0xff,
-                                a: 0xff,
-                            }),
-                            &DrawOptions {
-                                alpha: v,
-                                ..DrawOptions::default()
-                            },
-                        );
-                    });
-                }
-            }
-        }
-
-        let overlay: show_image::Image = dt.into();
-
-        let img = img.clone();
-        let window = show_image::context().run_function_wait(move |context| -> Result<_> {
-            let mut window = context
-                .create_window(
-                    "vis",
-                    WindowOptions {
-                        size: Some([width, height]),
-                        ..WindowOptions::default()
-                    },
-                )
-                .context("Failed to create window")?;
-            window.set_image(
-                "picture",
-                &img.as_image_view()
-                    .context("Failed to image view of original image")?,
-            );
-            window.set_overlay(
-                "yolo",
-                &overlay
-                    .as_image_view()
-                    .context("Failed to set image view of overlay")?,
-                true,
-            );
-            Ok(window.proxy())
-        })?;
-
-        for event in window.event_channel().unwrap() {
-            if let WindowEvent::KeyboardInput(event) = event {
-                if event.input.key_code == Some(VirtualKeyCode::Escape)
-                    && event.input.state.is_pressed()
-                {
-                    break;
-                }
-            }
+            let text = format!("{} {:.2}", detection.class_id, detection.confidence);
+            draw_text_on_draw_target(
+                &mut dt,
+                &text,
+                (
+                    bbox.x_center - bbox.width / 2.0,
+                    bbox.y_center - bbox.height / 2.0,
+                ),
+                40.0,
+            )
+            .context("Failed to draw text")?;
         }
 
         Ok(())
@@ -435,7 +356,7 @@ impl Yolo {
             3 => (p, q, v),
             4 => (t, p, v),
             5 => (v, p, q),
-            _ => (1.0, 1.0, 1.0), // 默认白色
+            _ => (1.0, 1.0, 1.0),
         };
 
         ((r * 255.0) as u8, (g * 255.0) as u8, (b * 255.0) as u8)
@@ -446,12 +367,7 @@ impl Yolo {
         let hue = (class_id as f32 / num_classes as f32) % 1.0;
         let (r, g, b) = Self::hsv_to_rgb(hue, 0.7, 0.9);
 
-        SolidSource {
-            r,
-            g,
-            b,
-            a: 0xFF, // 不透明
-        }
+        SolidSource { r, g, b, a: 0xFF }
     }
 }
 

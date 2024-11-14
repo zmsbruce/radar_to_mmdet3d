@@ -1557,6 +1557,7 @@ dependencies = [
  "image",
  "nalgebra",
  "ndarray",
+ "once_cell",
  "ort",
  "raqote",
  "rusttype",

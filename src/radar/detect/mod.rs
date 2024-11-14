@@ -1,11 +1,21 @@
+mod vis;
 mod yolo;
 
-use std::{cmp::Ordering, collections::HashMap};
+use std::{
+    cmp::Ordering,
+    collections::HashMap,
+    fmt::{self, Display},
+};
 
-use anyhow::{anyhow, Result};
-use image::DynamicImage;
+use anyhow::{anyhow, Context, Result};
+use image::{DynamicImage, GenericImageView};
+use raqote::DrawTarget;
 use tracing::{debug, info, span, trace, Level};
 
+use vis::{
+    display_window_and_waitkey, draw_rect_on_draw_target, draw_text_on_draw_target,
+    get_color_from_robot_label,
+};
 pub use yolo::{BBox, Execution};
 use yolo::{Detection, Yolo};
 
@@ -23,6 +33,48 @@ pub enum RobotLabel {
     RedInfantryFive,
     BlueSentry,
     RedSentry,
+}
+
+impl Display for RobotLabel {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.as_str())
+    }
+}
+
+impl RobotLabel {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            RobotLabel::BlueHero => "Blue Hero",
+            RobotLabel::BlueEngineer => "Blue Engineer",
+            RobotLabel::BlueInfantryThree => "Blue Infantry Three",
+            RobotLabel::BlueInfantryFour => "Blue Infantry Four",
+            RobotLabel::BlueInfantryFive => "Blue Infantry Five",
+            RobotLabel::RedHero => "Red Hero",
+            RobotLabel::RedEngineer => "Red Engineer",
+            RobotLabel::RedInfantryThree => "Red Infantry Three",
+            RobotLabel::RedInfantryFour => "Red Infantry Four",
+            RobotLabel::RedInfantryFive => "Red Infantry Five",
+            RobotLabel::BlueSentry => "Blue Sentry",
+            RobotLabel::RedSentry => "Red Sentry",
+        }
+    }
+
+    pub fn as_str_short(&self) -> &'static str {
+        match self {
+            RobotLabel::BlueHero => "B1",
+            RobotLabel::BlueEngineer => "B2",
+            RobotLabel::BlueInfantryThree => "B3",
+            RobotLabel::BlueInfantryFour => "B4",
+            RobotLabel::BlueInfantryFive => "B5",
+            RobotLabel::RedHero => "R1",
+            RobotLabel::RedEngineer => "R2",
+            RobotLabel::RedInfantryThree => "R3",
+            RobotLabel::RedInfantryFour => "R4",
+            RobotLabel::RedInfantryFive => "R5",
+            RobotLabel::BlueSentry => "Bs",
+            RobotLabel::RedSentry => "Rs",
+        }
+    }
 }
 
 impl TryFrom<u32> for RobotLabel {
@@ -264,5 +316,74 @@ impl RobotDetector {
         debug!("Detection complete. Robots: {:#?}.", robots);
 
         Ok(robots)
+    }
+
+    #[allow(unused)]
+    fn visualize_detections(
+        image: &DynamicImage,
+        robot_detections: &Vec<RobotDetection>,
+    ) -> Result<()> {
+        let (width, height) = image.dimensions();
+        let mut dt = DrawTarget::new(width as i32, height as i32);
+
+        for detection in robot_detections {
+            let bbox = detection.bbox();
+            draw_rect_on_draw_target(
+                &mut dt,
+                &bbox,
+                get_color_from_robot_label(detection.label),
+                4.,
+            );
+
+            let text = format!(
+                "{} {:.2}",
+                detection.label.as_str_short(),
+                detection.confidence
+            );
+            draw_text_on_draw_target(
+                &mut dt,
+                &text,
+                (
+                    bbox.x_center - bbox.width / 2.0,
+                    bbox.y_center - bbox.height / 2.0,
+                ),
+                40.0,
+            )
+            .context("Failed to draw text")?;
+
+            for armor in &detection.armor_detection {
+                let mut bbox = armor.bbox;
+                let car_bbox = &detection.bbox();
+                bbox.x_center += car_bbox.x_center - car_bbox.width / 2.0;
+                bbox.y_center += car_bbox.y_center - car_bbox.height / 2.0;
+
+                draw_rect_on_draw_target(
+                    &mut dt,
+                    &bbox,
+                    get_color_from_robot_label(detection.label),
+                    3.,
+                );
+
+                let text = format!(
+                    "{}: {:.2}",
+                    RobotLabel::try_from(armor.class_id)?.as_str_short(),
+                    armor.confidence
+                );
+                draw_text_on_draw_target(
+                    &mut dt,
+                    &text,
+                    (
+                        bbox.x_center - bbox.width / 2.0,
+                        bbox.y_center - bbox.height / 2.0,
+                    ),
+                    30.0,
+                )
+                .context("Failed to draw text")?;
+            }
+        }
+
+        display_window_and_waitkey(image, &dt).context("Failed to display window")?;
+
+        Ok(())
     }
 }

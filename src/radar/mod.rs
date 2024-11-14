@@ -30,7 +30,7 @@ impl Radar {
         image: &DynamicImage,
         point_cloud: &Vec<Point3<f32>>,
     ) -> Result<Vec<RdltResult>> {
-        Ok(self
+        let result = self
             .robot_detector
             .detect(&image)?
             .into_iter()
@@ -40,6 +40,8 @@ impl Radar {
                 confidence: det.confidence,
                 location: Point3::default(),
             })
-            .collect())
+            .collect();
+
+        Ok(result)
     }
 }
