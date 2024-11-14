@@ -54,3 +54,36 @@ fn init_logging(log_dir: &str) -> Result<()> {
 
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::{fs, io::Read};
+    use tempfile::tempdir;
+    use tracing::trace;
+
+    #[test]
+    fn test_init_logging_creates_log_file() -> Result<()> {
+        let tmp_dir = tempdir()?;
+        let log_dir = tmp_dir.path().to_str().unwrap();
+
+        init_logging(log_dir)?;
+
+        let entries: Vec<_> = fs::read_dir(log_dir)?
+            .map(|res| res.map(|e| e.path()))
+            .collect::<Result<Vec<_>, std::io::Error>>()?;
+
+        assert_eq!(entries.len(), 1);
+        assert!(entries[0].to_str().unwrap().ends_with(".log"));
+
+        trace!("This is a trace log.");
+
+        let mut log_file = File::open(&entries[0])?;
+        let mut contents = String::new();
+        log_file.read_to_string(&mut contents)?;
+
+        assert!(!contents.is_empty() && contents.contains("This is a trace log."));
+
+        Ok(())
+    }
+}
