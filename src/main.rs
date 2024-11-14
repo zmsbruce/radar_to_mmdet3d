@@ -16,7 +16,7 @@ fn main() -> Result<()> {
         Radar::new("assets/car.onnx", "assets/armor.onnx").context("Failed to initialize radar")?;
 
     let image =
-        image::open(PathBuf::from("assets/test/frame.jpg")).context("Failed to read image")?;
+        image::open(PathBuf::from("assets/test/match.jpg")).context("Failed to read image")?;
     let point_cloud = vec![];
 
     let result = radar
