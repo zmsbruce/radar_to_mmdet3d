@@ -9,6 +9,7 @@ use tracing::{debug, info, span, trace, Level};
 pub use yolo::{BBox, Execution};
 use yolo::{Detection, Yolo};
 
+#[derive(Debug)]
 pub struct RobotDetection {
     pub armor_detection: Vec<Detection>,
     pub car_detection: Detection,
@@ -222,10 +223,7 @@ impl RobotDetector {
         }
 
         let robots: Vec<_> = robots_map.into_iter().map(|(_k, v)| v).collect();
-        debug!(
-            "Detection complete. {} unique robots detected.",
-            robots.len()
-        );
+        debug!("Detection complete. Robots: {:#?}.", robots);
 
         Ok(robots)
     }
