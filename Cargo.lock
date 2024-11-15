@@ -1548,29 +1548,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "mmdet3dgen"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "assert_approx_eq",
- "chrono",
- "image",
- "nalgebra",
- "ndarray",
- "once_cell",
- "ort",
- "raqote",
- "rayon",
- "rusttype",
- "serde",
- "show-image",
- "tempfile",
- "toml",
- "tracing",
- "tracing-subscriber",
-]
-
-[[package]]
 name = "naga"
 version = "0.13.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2357,6 +2334,29 @@ dependencies = [
  "spin",
  "untrusted",
  "windows-sys 0.52.0",
+]
+
+[[package]]
+name = "rm_radar_to_mmdet3d"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "assert_approx_eq",
+ "chrono",
+ "image",
+ "nalgebra",
+ "ndarray",
+ "once_cell",
+ "ort",
+ "raqote",
+ "rayon",
+ "rusttype",
+ "serde",
+ "show-image",
+ "tempfile",
+ "toml",
+ "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]

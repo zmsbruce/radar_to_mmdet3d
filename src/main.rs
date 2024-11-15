@@ -8,7 +8,7 @@ use chrono::Local;
 use tracing::{span, trace, Level};
 use tracing_subscriber::{fmt, layer::SubscriberExt, util::SubscriberInitExt, EnvFilter, Layer};
 
-use mmdet3dgen::radar::Radar;
+use rm_radar_to_mmdet3d::radar::Radar;
 
 fn main() -> Result<()> {
     init_logging("log")?;
