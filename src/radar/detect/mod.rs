@@ -1,4 +1,3 @@
-pub mod config;
 mod vis;
 mod yolo;
 
