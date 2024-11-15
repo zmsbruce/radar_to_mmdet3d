@@ -1,0 +1,12 @@
+[detect]
+
+car_onnx_path = "assets/car.onnx"
+armor_onnx_path = "assets/armor.onnx"
+
+car_conf_thresh = 0.30
+armor_conf_thresh = 0.65
+
+car_nms_thresh = 0.50
+armor_nms_thresh = 0.75
+
+execution = "CPU"

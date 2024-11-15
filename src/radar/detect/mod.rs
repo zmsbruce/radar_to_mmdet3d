@@ -1,3 +1,4 @@
+pub mod config;
 mod vis;
 mod yolo;
 
@@ -202,23 +203,6 @@ impl RobotDetector {
             car_detector,
             armor_detector,
         })
-    }
-
-    pub fn with_defaults(car_onnx_path: &str, armor_onnx_path: &str) -> Result<Self> {
-        const DEFAULT_CAR_CONF_THRESH: f32 = 0.30;
-        const DEFAULT_ARMOR_CONF_THRESH: f32 = 0.65;
-        const DEFAULT_CAR_NMS_THRESH: f32 = 0.50;
-        const DEFAULT_ARMOR_NMS_THRESH: f32 = 0.75;
-
-        RobotDetector::new(
-            car_onnx_path,
-            armor_onnx_path,
-            DEFAULT_CAR_CONF_THRESH,
-            DEFAULT_ARMOR_CONF_THRESH,
-            DEFAULT_CAR_NMS_THRESH,
-            DEFAULT_ARMOR_NMS_THRESH,
-            Execution::Default,
-        )
     }
 
     pub fn detect(&self, image: &DynamicImage) -> Result<Vec<RobotDetection>> {

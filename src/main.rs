@@ -3,22 +3,29 @@ use std::{
     path::PathBuf,
 };
 
-use chrono::Local;
-use mmdet3dgen::radar::Radar;
-
 use anyhow::{Context, Result};
+use chrono::Local;
+use tracing::{span, trace, Level};
 use tracing_subscriber::{fmt, layer::SubscriberExt, util::SubscriberInitExt, EnvFilter, Layer};
+
+use mmdet3dgen::radar::Radar;
 
 fn main() -> Result<()> {
     init_logging("log")?;
 
-    let radar =
-        Radar::new("assets/car.onnx", "assets/armor.onnx").context("Failed to initialize radar")?;
+    let span = span!(Level::TRACE, "main");
+    let _enter = span.enter();
 
+    trace!("Initializing radar...");
+    let radar =
+        Radar::from_config_file("config/radar.toml").context("Failed to construct radar")?;
+
+    trace!("Reading image and point cloud...");
     let image =
         image::open(PathBuf::from("assets/test/match.jpg")).context("Failed to read image")?;
     let point_cloud = vec![];
 
+    trace!("Getting Rdlt result...");
     let result = radar
         .run_rdlt(&image, &point_cloud)
         .context("Failed to run rdlt")?;

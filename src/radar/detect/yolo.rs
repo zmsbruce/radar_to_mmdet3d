@@ -36,6 +36,21 @@ pub enum Execution {
     Default,
 }
 
+impl TryFrom<&str> for Execution {
+    type Error = anyhow::Error;
+
+    fn try_from(value: &str) -> std::result::Result<Self, Self::Error> {
+        match value.to_lowercase().as_str() {
+            "tensorrt" => Ok(Execution::TensorRT),
+            "cuda" => Ok(Execution::CUDA),
+            "openvino" => Ok(Execution::OpenVINO),
+            "cpu" => Ok(Execution::CPU),
+            "default" => Ok(Execution::Default),
+            _ => Err(anyhow!("Failed to convert {value} to execution")),
+        }
+    }
+}
+
 pub struct Yolo {
     conf_threshold: f32,
     nms_threshold: f32,
