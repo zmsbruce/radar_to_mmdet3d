@@ -12,6 +12,7 @@ mod cluster;
 
 const DEPTH_MAP_QUEUE_SIZE: usize = 3;
 
+#[allow(unused)]
 struct Transform {
     transform_matrix: Matrix4<f32>,
     transform_matrix_inverse: Matrix4<f32>,
@@ -26,6 +27,7 @@ struct MatrixWithInverse<const DIM: usize> {
     matrix_inverse: OMatrix<f32, Const<DIM>, Const<DIM>>,
 }
 
+#[derive(Debug)]
 pub struct RobotLocation {
     pub center: Point3<f32>,
     pub width: f32,
@@ -166,6 +168,10 @@ impl Locator {
             lidar_coor_vector[1],
             lidar_coor_vector[2],
         )
+    }
+
+    fn camera_to_world(&self, point: &Point3<f32>) -> Point3<f32> {
+        self.lidar_to_world(&self.camera_to_lidar(point))
     }
 
     fn lidar_to_camera(&self, point: &Point3<f32>) -> Point3<f32> {
@@ -327,7 +333,7 @@ impl Locator {
                         .filter_map(|&(x, y)| {
                             let depth = difference_depth_map.get_pixel(x, y).0[0];
                             if depth.is_normal() {
-                                Some(self.camera_to_lidar(&Point3::new(x as f32, y as f32, depth)))
+                                Some(self.camera_to_world(&Point3::new(x as f32, y as f32, depth)))
                             } else {
                                 None
                             }
