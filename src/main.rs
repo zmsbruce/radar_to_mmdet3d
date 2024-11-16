@@ -1,14 +1,9 @@
-use std::{
-    fs::{self, File},
-    path::PathBuf,
-};
+use std::fs::{self, File};
 
 use anyhow::{Context, Result};
 use chrono::Local;
-use tracing::{span, trace, Level};
+use tracing::{span, Level};
 use tracing_subscriber::{fmt, layer::SubscriberExt, util::SubscriberInitExt, EnvFilter, Layer};
-
-use rm_radar_to_mmdet3d::radar::Radar;
 
 fn main() -> Result<()> {
     init_logging("log")?;
@@ -16,21 +11,7 @@ fn main() -> Result<()> {
     let span = span!(Level::TRACE, "main");
     let _enter = span.enter();
 
-    trace!("Initializing radar...");
-    let radar =
-        Radar::from_config_file("config/radar.toml").context("Failed to construct radar")?;
-
-    trace!("Reading image and point cloud...");
-    let image =
-        image::open(PathBuf::from("assets/test/match.jpg")).context("Failed to read image")?;
-    let point_cloud = vec![];
-
-    trace!("Getting Rdlt result...");
-    let result = radar
-        .run_rdlt(&image, &point_cloud)
-        .context("Failed to run rdlt")?;
-
-    println!("Result: {:#?}", result);
+    println!("Hello, world!");
 
     Ok(())
 }
@@ -41,7 +22,7 @@ fn init_logging(log_dir: &str) -> Result<()> {
     }
 
     let file_name = format!(
-        "{}/mmdet3dgen_{}.log",
+        "{}/rm_radar_to_mmdet3d_{}.log",
         log_dir,
         Local::now().format("%Y-%m-%d_%H-%M-%S")
     );

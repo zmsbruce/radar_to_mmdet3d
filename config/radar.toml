@@ -10,3 +10,15 @@ car_nms_thresh = 0.50
 armor_nms_thresh = 0.75
 
 execution = "CUDA"
+
+[locate]
+
+cluster_epsilon = 0.30
+cluster_min_points = 8
+
+min_distance_to_background = 0.2
+max_distance_to_background = 8.0
+
+max_valid_distance = 29.3
+
+depth_map_queue_size = 4

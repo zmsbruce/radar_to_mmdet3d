@@ -2,7 +2,7 @@ mod config;
 mod detect;
 mod locate;
 
-use anyhow::{Context, Ok, Result};
+use anyhow::{Context, Result};
 use config::RadarConfig;
 use image::DynamicImage;
 use locate::{Locator, RobotLocation};
@@ -15,6 +15,12 @@ use tracing::{debug, span, trace, Level};
 pub struct RobotInfo {
     detection: RobotDetection,
     location: RobotLocation,
+}
+
+pub struct RadarInstanceParam {
+    camera_intrinsic: Matrix3<f32>,
+    lidar_to_world_transform: Matrix4<f32>,
+    lidar_to_camera_transform: Matrix4<f32>,
 }
 
 pub struct Radar {
@@ -31,16 +37,12 @@ impl Radar {
         car_nms_thresh: f32,
         armor_nms_thresh: f32,
         execution: Execution,
-        image_width: u32,
-        image_height: u32,
-        camera_intrinsic: Matrix3<f32>,
-        lidar_to_camera_transform: Matrix4<f32>,
-        world_to_camera_transform: Matrix4<f32>,
         cluster_epsilon: f32,
         cluster_min_points: usize,
         min_distance_to_background: f32,
         max_distance_to_background: f32,
         max_valid_distance: f32,
+        depth_map_queue_size: usize,
     ) -> Result<Self> {
         let span = span!(Level::TRACE, "Radar::new");
         let _enter = span.enter();
@@ -61,18 +63,13 @@ impl Radar {
         .context("Failed to construct robot detector")?;
 
         let locator = Locator::new(
-            image_width,
-            image_height,
-            camera_intrinsic,
-            lidar_to_camera_transform,
-            world_to_camera_transform,
             cluster_epsilon,
             cluster_min_points,
             min_distance_to_background,
             max_distance_to_background,
             max_valid_distance,
-        )
-        .context("Failed to construct locator")?;
+            depth_map_queue_size,
+        );
 
         trace!("Constructing radar...");
         let radar = Self {
@@ -99,16 +96,12 @@ impl Radar {
             radar_config.detect.car_nms_thresh,
             radar_config.detect.armor_nms_thresh,
             Execution::try_from(radar_config.detect.execution.as_str())?,
-            radar_config.locate.image_width,
-            radar_config.locate.image_height,
-            Matrix3::<f32>::from_row_slice(&radar_config.locate.camera_intrinsic),
-            Matrix4::<f32>::from_row_slice(&radar_config.locate.lidar_to_camera_transform),
-            Matrix4::<f32>::from_row_slice(&radar_config.locate.world_to_camera_transform),
             radar_config.locate.cluster_epsilon,
             radar_config.locate.cluster_min_points,
             radar_config.locate.min_distance_to_background,
             radar_config.locate.max_distance_to_background,
             radar_config.locate.max_valid_distance,
+            radar_config.locate.depth_map_queue_size,
         )
     }
 
@@ -116,13 +109,21 @@ impl Radar {
         &mut self,
         image: &DynamicImage,
         point_cloud: &Vec<Point3<f32>>,
+        params: &RadarInstanceParam,
     ) -> Result<Vec<RobotInfo>> {
         let span = span!(Level::TRACE, "Radar::detect_and_locate");
         let _enter = span.enter();
 
         trace!("Running detection and location...");
         let detect_result = self.robot_detector.detect(&image)?;
-        let locate_result = self.locator.locate_detections(&point_cloud, &detect_result);
+        let locate_result = self.locator.locate_detections(
+            &point_cloud,
+            &detect_result,
+            image,
+            &params.lidar_to_world_transform,
+            &params.lidar_to_camera_transform,
+            &params.camera_intrinsic,
+        )?;
 
         let robots = detect_result
             .into_iter()

@@ -1,31 +1,14 @@
 use std::collections::{HashMap, VecDeque};
 
 use anyhow::{anyhow, Result};
-use image::{ImageBuffer, Luma};
-use nalgebra::{Const, Matrix3, Matrix4, OMatrix, Point3, Vector3, Vector4};
+use image::{DynamicImage, GenericImageView, ImageBuffer, Luma};
+use nalgebra::{Matrix3, Matrix4, Point3, Vector3, Vector4};
 use rayon::prelude::*;
 
 use super::detect::{BBox, RobotDetection};
 use cluster::dbscan;
 
 mod cluster;
-
-const DEPTH_MAP_QUEUE_SIZE: usize = 3;
-
-#[allow(unused)]
-struct Transform {
-    transform_matrix: Matrix4<f32>,
-    transform_matrix_inverse: Matrix4<f32>,
-    rotation_matrix: Matrix3<f32>,
-    rotation_matrix_inverse: Matrix3<f32>,
-    translation_vector: Vector3<f32>,
-    translation_vector_inverse: Vector3<f32>,
-}
-
-struct MatrixWithInverse<const DIM: usize> {
-    matrix: OMatrix<f32, Const<DIM>, Const<DIM>>,
-    matrix_inverse: OMatrix<f32, Const<DIM>, Const<DIM>>,
-}
 
 #[derive(Debug)]
 pub struct RobotLocation {
@@ -35,59 +18,7 @@ pub struct RobotLocation {
     pub depth: f32,
 }
 
-impl TryFrom<Matrix4<f32>> for Transform {
-    type Error = anyhow::Error;
-
-    fn try_from(transform_matrix: Matrix4<f32>) -> std::result::Result<Self, Self::Error> {
-        let transform_matrix_inverse = transform_matrix
-            .try_inverse()
-            .ok_or_else(|| anyhow!("Failed to invert transform matrix {:#?}", transform_matrix))?;
-        let rotation_matrix: Matrix3<f32> = transform_matrix.fixed_view::<3, 3>(0, 0).into();
-        let rotation_matrix_inverse = rotation_matrix
-            .try_inverse()
-            .ok_or_else(|| anyhow!("Failed to invert rotation matrix {:#?}", rotation_matrix))?;
-        let translation_vector = Vector3::new(
-            transform_matrix[(0, 3)],
-            transform_matrix[(1, 3)],
-            transform_matrix[(2, 3)],
-        );
-        let translation_vector_inverse = -translation_vector;
-
-        let transform = Transform {
-            transform_matrix,
-            transform_matrix_inverse,
-            rotation_matrix,
-            rotation_matrix_inverse,
-            translation_vector,
-            translation_vector_inverse,
-        };
-
-        Ok(transform)
-    }
-}
-
-impl<const DIM: usize> TryFrom<OMatrix<f32, Const<DIM>, Const<DIM>>> for MatrixWithInverse<DIM> {
-    type Error = anyhow::Error;
-
-    fn try_from(
-        matrix: OMatrix<f32, Const<DIM>, Const<DIM>>,
-    ) -> std::result::Result<Self, Self::Error> {
-        let matrix_inverse = matrix
-            .try_inverse()
-            .ok_or_else(|| anyhow!("Failed to invert matrix {:#?}", matrix))?;
-
-        let matrix_with_inverse = Self {
-            matrix,
-            matrix_inverse,
-        };
-        Ok(matrix_with_inverse)
-    }
-}
-
 pub struct Locator {
-    camera_intrinsic: MatrixWithInverse<3>,
-    lidar_to_camera: Transform,
-    world_to_camera: Transform,
     cluster_epsilon: f32,
     cluster_min_points: usize,
     min_distance_to_background: f32,
@@ -95,58 +26,82 @@ pub struct Locator {
     max_valid_distance: f32,
     background_depth_map: ImageBuffer<Luma<f32>, Vec<f32>>,
     depth_map_queue: VecDeque<ImageBuffer<Luma<f32>, Vec<f32>>>,
+    depth_map_queue_size: usize,
 }
 
 impl Locator {
     pub fn new(
-        image_width: u32,
-        image_height: u32,
-        camera_intrinsic: Matrix3<f32>,
-        lidar_to_camera_transform: Matrix4<f32>,
-        world_to_camera_transform: Matrix4<f32>,
         cluster_epsilon: f32,
         cluster_min_points: usize,
         min_distance_to_background: f32,
         max_distance_to_background: f32,
         max_valid_distance: f32,
-    ) -> Result<Self> {
-        let locator = Self {
-            camera_intrinsic: MatrixWithInverse::try_from(camera_intrinsic)?,
-            lidar_to_camera: Transform::try_from(lidar_to_camera_transform)?,
-            world_to_camera: Transform::try_from(world_to_camera_transform)?,
+        depth_map_queue_size: usize,
+    ) -> Self {
+        Self {
             cluster_epsilon,
             cluster_min_points,
             min_distance_to_background,
             max_distance_to_background,
             max_valid_distance,
-            background_depth_map: ImageBuffer::new(image_width, image_height),
-            depth_map_queue: VecDeque::with_capacity(DEPTH_MAP_QUEUE_SIZE),
-        };
-
-        Ok(locator)
+            background_depth_map: ImageBuffer::default(),
+            depth_map_queue: VecDeque::with_capacity(depth_map_queue_size),
+            depth_map_queue_size,
+        }
     }
 
     pub fn locate_detections(
         &mut self,
         points: &[Point3<f32>],
         detections: &[RobotDetection],
-    ) -> Vec<Option<RobotLocation>> {
-        let robot_depth_map = self.get_robot_depth_map(points);
+        input_image: &DynamicImage,
+        lidar_to_world_transform: &Matrix4<f32>,
+        lidar_to_camera_transform: &Matrix4<f32>,
+        camera_intrinsic: &Matrix3<f32>,
+    ) -> Result<Vec<Option<RobotLocation>>> {
+        let (image_width, image_height) = input_image.dimensions();
+        if self.background_depth_map.is_empty() {
+            self.background_depth_map = ImageBuffer::new(image_width, image_height);
+        } else if self.background_depth_map.dimensions() != (image_width, image_height) {
+            return Err(anyhow!(
+                "Dimensions of image is not equal to background depth image"
+            ));
+        }
 
-        let pixels_category_mapping = self.cluster_and_get_category(&robot_depth_map);
+        let robot_depth_map =
+            self.get_robot_depth_map(points, lidar_to_camera_transform, camera_intrinsic);
+
+        let camera_to_lidar_transform =
+            lidar_to_camera_transform.try_inverse().ok_or_else(|| {
+                anyhow!(
+                    "Failed to invert lidar to camera transform: {:#?}",
+                    lidar_to_camera_transform
+                )
+            })?;
+        let camera_intrinsic_inverse = camera_intrinsic
+            .try_inverse()
+            .ok_or_else(|| anyhow!("Failed to invert camera intrinsic {:#?}", camera_intrinsic))?;
+        let pixels_category_mapping = self.cluster_and_get_category(
+            &robot_depth_map,
+            &camera_to_lidar_transform,
+            &camera_intrinsic_inverse,
+        );
 
         let bboxes: Vec<_> = detections.iter().map(|det| det.bbox()).collect();
-
-        self.search_for_location(&bboxes, robot_depth_map, pixels_category_mapping)
+        let robot_locations = self.search_for_location(
+            &bboxes,
+            robot_depth_map,
+            pixels_category_mapping,
+            lidar_to_world_transform,
+            &camera_to_lidar_transform,
+            &camera_intrinsic_inverse,
+        );
+        Ok(robot_locations)
     }
 
-    fn lidar_to_world(&self, point: &Point3<f32>) -> Point3<f32> {
+    fn lidar_to_world(point: &Point3<f32>, lidar_to_world_transform: &Matrix4<f32>) -> Point3<f32> {
         let lidar_coor_vector = Vector4::new(point.x, point.y, point.z, 1.0);
-
-        let camera_to_world_transform = &self.world_to_camera.transform_matrix_inverse;
-        let lidar_to_camera_transform = &self.lidar_to_camera.transform_matrix;
-        let world_coor_vector =
-            camera_to_world_transform * lidar_to_camera_transform * lidar_coor_vector;
+        let world_coor_vector = lidar_to_world_transform * lidar_coor_vector;
 
         Point3::new(
             world_coor_vector[0],
@@ -155,12 +110,18 @@ impl Locator {
         )
     }
 
-    fn camera_to_lidar(&self, point: &Point3<f32>) -> Point3<f32> {
+    fn camera_to_lidar(
+        point: &Point3<f32>,
+        camera_to_lidar_transform: &Matrix4<f32>,
+        camera_intrinsic_inverse: &Matrix3<f32>,
+    ) -> Point3<f32> {
         let camera_coor_vector = Vector3::new(point.x, point.y, 1.0);
 
-        let camera_to_lidar_rotate = &self.lidar_to_camera.rotation_matrix_inverse;
-        let camera_intrinsic_inverse = &self.camera_intrinsic.matrix_inverse;
-        let camera_to_lidar_translate = &self.lidar_to_camera.translation_vector_inverse;
+        let (camera_to_lidar_rotate, camera_to_lidar_translate) = (
+            camera_to_lidar_transform.fixed_view::<3, 3>(0, 0),
+            camera_to_lidar_transform.fixed_view::<3, 1>(0, 3),
+        );
+
         let lidar_coor_vector = camera_to_lidar_rotate
             * (camera_intrinsic_inverse * point.z * camera_coor_vector + camera_to_lidar_translate);
         Point3::new(
@@ -170,16 +131,15 @@ impl Locator {
         )
     }
 
-    fn camera_to_world(&self, point: &Point3<f32>) -> Point3<f32> {
-        self.lidar_to_world(&self.camera_to_lidar(point))
-    }
-
-    fn lidar_to_camera(&self, point: &Point3<f32>) -> Point3<f32> {
+    fn lidar_to_camera(
+        point: &Point3<f32>,
+        lidar_to_camera_transform: &Matrix4<f32>,
+        camera_intrinsic: &Matrix3<f32>,
+    ) -> Point3<f32> {
         let lidar_coor_vector = Vector4::new(point.x, point.y, point.z, 1.0);
 
-        let lidar_to_camera_transform = &self.lidar_to_camera.transform_matrix;
-        let camera_coor_vector = self.camera_intrinsic.matrix
-            * (lidar_to_camera_transform * lidar_coor_vector).view((0, 0), (3, 1));
+        let camera_coor_vector =
+            camera_intrinsic * (lidar_to_camera_transform * lidar_coor_vector).view((0, 0), (3, 1));
         Point3::new(
             camera_coor_vector[0] / camera_coor_vector[2],
             camera_coor_vector[1] / camera_coor_vector[2],
@@ -187,7 +147,12 @@ impl Locator {
         )
     }
 
-    fn get_robot_depth_map(&mut self, points: &[Point3<f32>]) -> ImageBuffer<Luma<f32>, Vec<f32>> {
+    fn get_robot_depth_map(
+        &mut self,
+        points: &[Point3<f32>],
+        lidar_to_camera_transform: &Matrix4<f32>,
+        camera_intrinsic: &Matrix3<f32>,
+    ) -> ImageBuffer<Luma<f32>, Vec<f32>> {
         let (image_width, image_height) = self.background_depth_map.dimensions();
 
         let camera_points_filtered: Vec<_> = points
@@ -199,7 +164,11 @@ impl Locator {
                     && lidar_point.z.is_normal()
                     && lidar_point.x < self.max_valid_distance
                 {
-                    let camera_point = self.lidar_to_camera(lidar_point);
+                    let camera_point = Self::lidar_to_camera(
+                        lidar_point,
+                        lidar_to_camera_transform,
+                        camera_intrinsic,
+                    );
                     let (u, v) = (camera_point.x.round() as i32, camera_point.y.round() as i32);
                     if u >= 0 && (u as u32) < image_width && v >= 0 && (v as u32) < image_height {
                         Some((u as u32, v as u32, camera_point.z))
@@ -219,7 +188,7 @@ impl Locator {
             depth_map.put_pixel(*u, *v, Luma([*depth]));
         });
         self.depth_map_queue.push_back(depth_map);
-        if self.depth_map_queue.len() > DEPTH_MAP_QUEUE_SIZE {
+        if self.depth_map_queue.len() > self.depth_map_queue_size {
             self.depth_map_queue.pop_front();
         }
 
@@ -256,6 +225,8 @@ impl Locator {
     fn cluster_and_get_category(
         &self,
         difference_depth_map: &ImageBuffer<Luma<f32>, Vec<f32>>,
+        camera_to_lidar_transform: &Matrix4<f32>,
+        camera_intrinsic_inverse: &Matrix3<f32>,
     ) -> HashMap<(u32, u32), isize> {
         let camera_points: Vec<_> = difference_depth_map
             .enumerate_pixels()
@@ -270,9 +241,19 @@ impl Locator {
             })
             .collect();
 
-        let lidar_points: Vec<_> = camera_points
+        let lidar_points: Vec<Point3<f32>> = camera_points
             .iter()
-            .map(|(x, y, depth)| self.camera_to_lidar(&Point3::new(*x as f32, *y as f32, *depth)))
+            .map(|(x, y, depth)| {
+                let camera_point = Point3::new(*x as f32, *y as f32, *depth);
+
+                let lidar_point = Self::camera_to_lidar(
+                    &camera_point,
+                    camera_to_lidar_transform,
+                    camera_intrinsic_inverse,
+                );
+
+                lidar_point
+            })
             .collect();
 
         let categories = dbscan(&lidar_points, self.cluster_epsilon, self.cluster_min_points);
@@ -293,6 +274,9 @@ impl Locator {
         bboxes: &[BBox],
         difference_depth_map: ImageBuffer<Luma<f32>, Vec<f32>>,
         cluster_result: HashMap<(u32, u32), isize>,
+        lidar_to_world_transform: &Matrix4<f32>,
+        camera_to_lidar_transform: &Matrix4<f32>,
+        camera_intrinsic_inverse: &Matrix3<f32>,
     ) -> Vec<Option<RobotLocation>> {
         let (image_width, image_height) = difference_depth_map.dimensions();
 
@@ -333,7 +317,15 @@ impl Locator {
                         .filter_map(|&(x, y)| {
                             let depth = difference_depth_map.get_pixel(x, y).0[0];
                             if depth.is_normal() {
-                                Some(self.camera_to_world(&Point3::new(x as f32, y as f32, depth)))
+                                let camera_point = Point3::new(x as f32, y as f32, depth);
+                                let lidar_point = Self::camera_to_lidar(
+                                    &camera_point,
+                                    camera_to_lidar_transform,
+                                    camera_intrinsic_inverse,
+                                );
+                                let world_point =
+                                    Self::lidar_to_world(&lidar_point, lidar_to_world_transform);
+                                Some(world_point)
                             } else {
                                 None
                             }
@@ -398,82 +390,37 @@ mod tests {
     use nalgebra::{Matrix3, Matrix4, Point3};
 
     #[test]
-    fn test_transform_inverse() {
-        let transform_matrix = Matrix4::new(
-            1.0, 0.0, 0.0, 2.0, 0.0, 1.0, 0.0, 3.0, 0.0, 0.0, 1.0, 4.0, 0.0, 0.0, 0.0, 1.0,
-        );
-
-        let transform = Transform::try_from(transform_matrix).unwrap();
-
-        let expected_inverse = transform_matrix.try_inverse().unwrap();
-        assert_eq!(transform.transform_matrix_inverse, expected_inverse);
-
-        let expected_rotation = Matrix3::new(1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0);
-
-        assert_eq!(transform.rotation_matrix, expected_rotation);
-        assert_eq!(transform.translation_vector, Vector3::new(2.0, 3.0, 4.0));
-    }
-
-    #[test]
-    fn test_matrix_with_inverse() {
-        let matrix = Matrix3::new(1.0, 2.0, 3.0, 0.0, 1.0, 4.0, 5.0, 6.0, 0.0);
-
-        let matrix_with_inverse = MatrixWithInverse::try_from(matrix).unwrap();
-
-        let expected_inverse = matrix.try_inverse().unwrap();
-        assert_eq!(matrix_with_inverse.matrix_inverse, expected_inverse);
-    }
-
-    #[test]
     fn test_lidar_camera_conversion() {
-        let camera_intrinsic = Matrix3::new(1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0);
-        let lidar_to_camera_transform = Matrix4::identity();
-        let world_to_camera_transform = Matrix4::identity();
-
-        let locator = Locator::new(
-            640,
-            480,
-            camera_intrinsic,
-            lidar_to_camera_transform,
-            world_to_camera_transform,
-            0.5,
-            10,
-            0.1,
-            10.0,
-            100.0,
-        )
-        .unwrap();
+        let camera_intrinsic = Matrix3::<f32>::identity();
+        let lidar_to_camera_transform = Matrix4::<f32>::identity();
 
         let lidar_point = Point3::new(1.0, 2.0, 3.0);
-        let camera_point = locator.lidar_to_camera(&lidar_point);
-        let converted_back = locator.camera_to_lidar(&camera_point);
+        let camera_point =
+            Locator::lidar_to_camera(&lidar_point, &lidar_to_camera_transform, &camera_intrinsic);
+
+        let camera_to_lidar_transform = lidar_to_camera_transform.try_inverse().unwrap();
+        let camera_intrinsic_inverse = camera_intrinsic.try_inverse().unwrap();
+        let converted_back = Locator::camera_to_lidar(
+            &camera_point,
+            &camera_to_lidar_transform,
+            &camera_intrinsic_inverse,
+        );
 
         assert_approx_eq!((lidar_point - converted_back).norm(), 0.0);
     }
 
     #[test]
     fn test_get_robot_depth_map() {
-        let camera_intrinsic = Matrix3::new(1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0);
-        let lidar_to_camera_transform = Matrix4::identity();
-        let world_to_camera_transform = Matrix4::identity();
+        let camera_intrinsic = Matrix3::<f32>::identity();
+        let lidar_to_camera_transform = Matrix4::<f32>::identity();
 
-        let mut locator = Locator::new(
-            640,
-            480,
-            camera_intrinsic,
-            lidar_to_camera_transform,
-            world_to_camera_transform,
-            0.5,
-            10,
-            0.1,
-            10.0,
-            100.0,
-        )
-        .unwrap();
+        let mut locator = Locator::new(0.5, 10, 0.1, 10.0, 100.0, 1);
+        locator.background_depth_map = ImageBuffer::new(10, 10);
 
         let points = vec![Point3::new(2.0, 3.0, 1.0)];
 
-        let depth_map = locator.get_robot_depth_map(&points);
+        let depth_map =
+            locator.get_robot_depth_map(&points, &lidar_to_camera_transform, &camera_intrinsic);
 
         let pixel = depth_map.get_pixel(2, 3);
         assert_approx_eq!(pixel.0[0], 1.0);
