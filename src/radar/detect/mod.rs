@@ -370,3 +370,57 @@ impl RobotDetector {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use std::path::PathBuf;
+
+    use anyhow::Result;
+
+    use super::*;
+
+    #[test]
+    fn test_robot_detector() -> Result<()> {
+        let robot_detector = RobotDetector::new(
+            "assets/test/car.onnx",
+            "assets/test/armor.onnx",
+            0.30,
+            0.45,
+            0.50,
+            0.75,
+            Execution::CPU,
+        )?;
+
+        let image =
+            image::open(PathBuf::from("assets/test/frame.png")).context("Failed to read image")?;
+
+        let detections = robot_detector.detect(&image)?;
+        assert_eq!(detections.len(), 6);
+        assert!(detections
+            .iter()
+            .find(|det| det.label == RobotLabel::RedSentry)
+            .is_some());
+        assert!(detections
+            .iter()
+            .find(|det| det.label == RobotLabel::RedEngineer)
+            .is_some());
+        assert!(detections
+            .iter()
+            .find(|det| det.label == RobotLabel::RedInfantryFive)
+            .is_some());
+        assert!(detections
+            .iter()
+            .find(|det| det.label == RobotLabel::BlueSentry)
+            .is_some());
+        assert!(detections
+            .iter()
+            .find(|det| det.label == RobotLabel::BlueEngineer)
+            .is_some());
+        assert!(detections
+            .iter()
+            .find(|det| det.label == RobotLabel::BlueInfantryFive)
+            .is_some());
+
+        Ok(())
+    }
+}
