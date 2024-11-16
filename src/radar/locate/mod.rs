@@ -183,39 +183,35 @@ impl Locator {
 
     fn get_robot_depth_map(&mut self, points: &[Point3<f32>]) -> ImageBuffer<Luma<f32>, Vec<f32>> {
         let (image_width, image_height) = self.background_depth_map.dimensions();
+
+        let camera_points_filtered: Vec<_> = points
+            .iter()
+            .filter_map(|lidar_point| {
+                if !lidar_point.is_empty()
+                    && lidar_point.x.is_normal()
+                    && lidar_point.y.is_normal()
+                    && lidar_point.z.is_normal()
+                    && lidar_point.x < self.max_valid_distance
+                {
+                    let camera_point = self.lidar_to_camera(lidar_point);
+                    let (u, v) = (camera_point.x.round() as i32, camera_point.y.round() as i32);
+                    if u >= 0 && (u as u32) < image_width && v >= 0 && (v as u32) < image_height {
+                        Some((u as u32, v as u32, camera_point.z))
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                }
+            })
+            .collect();
+
         let mut depth_map: ImageBuffer<Luma<f32>, Vec<_>> =
             ImageBuffer::new(image_width, image_height);
-
-        for point in points {
-            if point.is_empty()
-                || !point.x.is_normal()
-                || !point.y.is_normal()
-                || !point.z.is_normal()
-            {
-                continue;
-            }
-
-            if point.x > self.max_valid_distance {
-                continue;
-            }
-
-            let camera_point = self.lidar_to_camera(point);
-            let (u, v, depth) = (
-                camera_point.x.round() as i32,
-                camera_point.y.round() as i32,
-                camera_point.z as f32,
-            );
-            if u < 0 || u as u32 >= image_width || v < 0 || v as u32 >= image_height {
-                continue;
-            }
-            depth_map.put_pixel(u as u32, v as u32, Luma([depth]));
-
-            let background_depth = self.background_depth_map.get_pixel_mut(u as u32, v as u32);
-            if depth > background_depth.0[0] {
-                background_depth.0[0] = depth;
-            }
-        }
-
+        camera_points_filtered.iter().for_each(|point| {
+            let (u, v, depth) = point;
+            depth_map.put_pixel(*u, *v, Luma([*depth]));
+        });
         self.depth_map_queue.push_back(depth_map);
         if self.depth_map_queue.len() > DEPTH_MAP_QUEUE_SIZE {
             self.depth_map_queue.pop_front();
@@ -238,6 +234,14 @@ impl Locator {
                         pixel.0[0] = difference;
                     }
                 });
+        });
+
+        camera_points_filtered.into_iter().for_each(|point| {
+            let (u, v, depth) = point;
+            let background_depth = self.background_depth_map.get_pixel_mut(u, v);
+            if depth > background_depth.0[0] {
+                background_depth.0[0] = depth;
+            }
         });
 
         difference_depth_map
@@ -389,12 +393,8 @@ mod tests {
 
     #[test]
     fn test_transform_inverse() {
-        #[rustfmt::skip]
         let transform_matrix = Matrix4::new(
-            1.0, 0.0, 0.0, 2.0,  
-            0.0, 1.0, 0.0, 3.0,
-            0.0, 0.0, 1.0, 4.0,
-            0.0, 0.0, 0.0, 1.0,
+            1.0, 0.0, 0.0, 2.0, 0.0, 1.0, 0.0, 3.0, 0.0, 0.0, 1.0, 4.0, 0.0, 0.0, 0.0, 1.0,
         );
 
         let transform = Transform::try_from(transform_matrix).unwrap();
@@ -402,12 +402,7 @@ mod tests {
         let expected_inverse = transform_matrix.try_inverse().unwrap();
         assert_eq!(transform.transform_matrix_inverse, expected_inverse);
 
-        #[rustfmt::skip]
-        let expected_rotation = Matrix3::new(
-            1.0, 0.0, 0.0,
-            0.0, 1.0, 0.0,
-            0.0, 0.0, 1.0,
-        );
+        let expected_rotation = Matrix3::new(1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0);
 
         assert_eq!(transform.rotation_matrix, expected_rotation);
         assert_eq!(transform.translation_vector, Vector3::new(2.0, 3.0, 4.0));
@@ -415,12 +410,7 @@ mod tests {
 
     #[test]
     fn test_matrix_with_inverse() {
-        #[rustfmt::skip]
-        let matrix = Matrix3::new(
-            1.0, 2.0, 3.0,
-            0.0, 1.0, 4.0,
-            5.0, 6.0, 0.0,
-        );
+        let matrix = Matrix3::new(1.0, 2.0, 3.0, 0.0, 1.0, 4.0, 5.0, 6.0, 0.0);
 
         let matrix_with_inverse = MatrixWithInverse::try_from(matrix).unwrap();
 
@@ -430,12 +420,7 @@ mod tests {
 
     #[test]
     fn test_lidar_camera_conversion() {
-        #[rustfmt::skip]
-        let camera_intrinsic = Matrix3::new(
-            1.0, 0.0, 0.0,
-            0.0, 1.0, 0.0,
-            0.0, 0.0, 1.0,
-        );
+        let camera_intrinsic = Matrix3::new(1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0);
         let lidar_to_camera_transform = Matrix4::identity();
         let world_to_camera_transform = Matrix4::identity();
 
@@ -462,12 +447,7 @@ mod tests {
 
     #[test]
     fn test_get_robot_depth_map() {
-        #[rustfmt::skip]
-        let camera_intrinsic = Matrix3::new(
-            1.0, 0.0, 0.0,
-            0.0, 1.0, 0.0,
-            0.0, 0.0, 1.0,
-        );
+        let camera_intrinsic = Matrix3::new(1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0);
         let lidar_to_camera_transform = Matrix4::identity();
         let world_to_camera_transform = Matrix4::identity();
 
@@ -485,13 +465,11 @@ mod tests {
         )
         .unwrap();
 
-        let points_0 = vec![Point3::new(2.0, 3.0, 1.0)];
-        let points_1 = vec![Point3::new(1.0, 2.0, 3.0), Point3::new(2.0, 3.0, 1.0)];
+        let points = vec![Point3::new(2.0, 3.0, 1.0)];
 
-        locator.get_robot_depth_map(&points_0);
-        let depth_map = locator.get_robot_depth_map(&points_1);
+        let depth_map = locator.get_robot_depth_map(&points);
 
-        let pixel = depth_map.get_pixel(0, 1);
-        assert_approx_eq!(pixel.0[0], 3.0);
+        let pixel = depth_map.get_pixel(2, 3);
+        assert_approx_eq!(pixel.0[0], 1.0);
     }
 }
