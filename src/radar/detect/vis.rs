@@ -1,6 +1,13 @@
+use std::sync::Arc;
+
 use anyhow::{Context, Result};
+use font_kit::{
+    family_name::FamilyName,
+    properties::{Properties, Style, Weight},
+    source::SystemSource,
+};
 use image::{DynamicImage, GenericImageView};
-use once_cell::sync::Lazy;
+use lazy_static::lazy_static;
 use raqote::{DrawOptions, DrawTarget, LineJoin, PathBuilder, SolidSource, Source, StrokeStyle};
 use rusttype::{point, Font, Scale};
 use show_image::{
@@ -10,8 +17,22 @@ use show_image::{
 
 use super::{BBox, RobotLabel};
 
-static FONT_DATA: Lazy<&'static [u8]> =
-    Lazy::new(|| include_bytes!("../../../assets/fonts/NotoSans-Regular.ttf") as &[u8]);
+lazy_static! {
+    static ref FONT_DATA: Arc<Vec<u8>> = SystemSource::new()
+        .select_best_match(
+            &[FamilyName::SansSerif],
+            &Properties {
+                style: Style::Normal,
+                weight: Weight::NORMAL,
+                ..Properties::default()
+            }
+        )
+        .expect("Failed to find a matching font")
+        .load()
+        .expect("Failed to load font")
+        .copy_font_data()
+        .unwrap();
+}
 
 pub fn draw_rect_on_draw_target(dt: &mut DrawTarget, rect: &BBox, color: SolidSource, width: f32) {
     let mut pb = PathBuilder::new();
@@ -69,9 +90,9 @@ pub fn draw_text_on_draw_target(
     position: (f32, f32),
     font_size: f32,
 ) -> Result<()> {
-    let font_data = *FONT_DATA;
+    let font_data = FONT_DATA.clone();
 
-    let font = Font::try_from_bytes(&font_data).context("Failed to load font")?;
+    let font = Font::try_from_bytes(&*font_data).context("Failed to load font")?;
     let font_scale = Scale::uniform(font_size);
     let v_metrics = font.v_metrics(font_scale);
 
