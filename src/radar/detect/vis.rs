@@ -11,7 +11,7 @@ use show_image::{
 use super::{BBox, RobotLabel};
 
 static FONT_DATA: Lazy<&'static [u8]> =
-    Lazy::new(|| include_bytes!("../../../assets/NotoSans-Regular.ttf") as &[u8]);
+    Lazy::new(|| include_bytes!("../../../assets/fonts/NotoSans-Regular.ttf") as &[u8]);
 
 pub fn draw_rect_on_draw_target(dt: &mut DrawTarget, rect: &BBox, color: SolidSource, width: f32) {
     let mut pb = PathBuilder::new();
