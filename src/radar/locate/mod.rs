@@ -4,6 +4,7 @@ use anyhow::{anyhow, Result};
 use image::{DynamicImage, GenericImageView, ImageBuffer, Luma};
 use nalgebra::{Matrix3, Matrix4, Point3, Vector3, Vector4};
 use rayon::prelude::*;
+use tracing::{debug, span, trace, Level};
 
 use super::detect::{BBox, RobotDetection};
 use cluster::dbscan;
@@ -38,6 +39,18 @@ impl Locator {
         max_valid_distance: f32,
         depth_map_queue_size: usize,
     ) -> Self {
+        let span = span!(Level::TRACE, "Locator::new");
+        let _enter = span.enter();
+
+        debug!(
+            "Initializing Locator with cluster epsilon: {}, distance to background: {}~{}, max valid distance: {}, depth map queue size: {}",
+            cluster_epsilon,
+            min_distance_to_background,
+            max_distance_to_background,
+            max_valid_distance,
+            depth_map_queue_size
+        );
+
         Self {
             cluster_epsilon,
             cluster_min_points,
@@ -59,8 +72,18 @@ impl Locator {
         lidar_to_camera_transform: &Matrix4<f32>,
         camera_intrinsic: &Matrix3<f32>,
     ) -> Result<Vec<Option<RobotLocation>>> {
+        let span = span!(Level::TRACE, "Locator::locate_detections");
+        let _enter = span.enter();
+
+        debug!(
+            "Locating detections with {} points and {} detections",
+            points.len(),
+            detections.len()
+        );
+
         let (image_width, image_height) = input_image.dimensions();
         if self.background_depth_map.is_empty() {
+            debug!("Background depth map is empty, initializing.");
             self.background_depth_map = ImageBuffer::new(image_width, image_height);
         } else if self.background_depth_map.dimensions() != (image_width, image_height) {
             return Err(anyhow!(
@@ -81,6 +104,8 @@ impl Locator {
         let camera_intrinsic_inverse = camera_intrinsic
             .try_inverse()
             .ok_or_else(|| anyhow!("Failed to invert camera intrinsic {:#?}", camera_intrinsic))?;
+
+        debug!("Clustering and mapping categories.");
         let pixels_category_mapping = self.cluster_and_get_category(
             &robot_depth_map,
             &camera_to_lidar_transform,
@@ -96,10 +121,13 @@ impl Locator {
             &camera_to_lidar_transform,
             &camera_intrinsic_inverse,
         );
+
+        debug!("Robot locations found: {:?}", robot_locations);
         Ok(robot_locations)
     }
 
     fn lidar_to_world(point: &Point3<f32>, lidar_to_world_transform: &Matrix4<f32>) -> Point3<f32> {
+        trace!("Converting lidar point to world coordinates: {:?}", point);
         let lidar_coor_vector = Vector4::new(point.x, point.y, point.z, 1.0);
         let world_coor_vector = lidar_to_world_transform * lidar_coor_vector;
 
@@ -115,6 +143,7 @@ impl Locator {
         camera_to_lidar_transform: &Matrix4<f32>,
         camera_intrinsic_inverse: &Matrix3<f32>,
     ) -> Point3<f32> {
+        trace!("Converting camera point to lidar coordinates: {:?}", point);
         let camera_coor_vector = Vector3::new(point.x, point.y, 1.0);
 
         let (camera_to_lidar_rotate, camera_to_lidar_translate) = (
@@ -136,6 +165,7 @@ impl Locator {
         lidar_to_camera_transform: &Matrix4<f32>,
         camera_intrinsic: &Matrix3<f32>,
     ) -> Point3<f32> {
+        trace!("Converting lidar point to camera coordinates: {:?}", point);
         let lidar_coor_vector = Vector4::new(point.x, point.y, point.z, 1.0);
 
         let camera_coor_vector =
@@ -153,10 +183,14 @@ impl Locator {
         lidar_to_camera_transform: &Matrix4<f32>,
         camera_intrinsic: &Matrix3<f32>,
     ) -> ImageBuffer<Luma<f32>, Vec<f32>> {
+        let span = span!(Level::TRACE, "Locator::get_robot_depth_map");
+        let _enter = span.enter();
+
         let (image_width, image_height) = self.background_depth_map.dimensions();
         let mut depth_map: ImageBuffer<Luma<f32>, Vec<_>> =
             ImageBuffer::new(image_width, image_height);
 
+        debug!("Generating robot depth map with {} points", points.len());
         points
             .iter()
             .filter_map(|lidar_point| {
@@ -183,6 +217,7 @@ impl Locator {
             })
             .for_each(|point| {
                 let (u, v, depth) = point;
+                trace!("Mapping depth value {} at ({}, {})", depth, u, v);
                 depth_map.put_pixel(u, v, Luma([depth]));
 
                 let background_depth = self.background_depth_map.get_pixel_mut(u, v);
@@ -224,6 +259,10 @@ impl Locator {
         camera_to_lidar_transform: &Matrix4<f32>,
         camera_intrinsic_inverse: &Matrix3<f32>,
     ) -> HashMap<(u32, u32), isize> {
+        let span = span!(Level::TRACE, "Locator::cluster_and_get_category");
+        let _enter = span.enter();
+
+        debug!("Clustering depth map into categories");
         let camera_points: Vec<_> = difference_depth_map
             .enumerate_pixels()
             .par_bridge()
@@ -274,6 +313,13 @@ impl Locator {
         camera_to_lidar_transform: &Matrix4<f32>,
         camera_intrinsic_inverse: &Matrix3<f32>,
     ) -> Vec<Option<RobotLocation>> {
+        let span = span!(Level::TRACE, "Locator::search_for_location");
+        let _enter = span.enter();
+
+        debug!(
+            "Searching for robot locations in {} bounding boxes",
+            bboxes.len()
+        );
         let (image_width, image_height) = difference_depth_map.dimensions();
 
         bboxes
