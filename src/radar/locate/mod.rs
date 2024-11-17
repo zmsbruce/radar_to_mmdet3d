@@ -154,8 +154,10 @@ impl Locator {
         camera_intrinsic: &Matrix3<f32>,
     ) -> ImageBuffer<Luma<f32>, Vec<f32>> {
         let (image_width, image_height) = self.background_depth_map.dimensions();
+        let mut depth_map: ImageBuffer<Luma<f32>, Vec<_>> =
+            ImageBuffer::new(image_width, image_height);
 
-        let camera_points_filtered: Vec<_> = points
+        points
             .iter()
             .filter_map(|lidar_point| {
                 if !lidar_point.is_empty()
@@ -179,14 +181,16 @@ impl Locator {
                     None
                 }
             })
-            .collect();
+            .for_each(|point| {
+                let (u, v, depth) = point;
+                depth_map.put_pixel(u, v, Luma([depth]));
 
-        let mut depth_map: ImageBuffer<Luma<f32>, Vec<_>> =
-            ImageBuffer::new(image_width, image_height);
-        camera_points_filtered.iter().for_each(|point| {
-            let (u, v, depth) = point;
-            depth_map.put_pixel(*u, *v, Luma([*depth]));
-        });
+                let background_depth = self.background_depth_map.get_pixel_mut(u, v);
+                if depth > background_depth.0[0] {
+                    background_depth.0[0] = depth;
+                }
+            });
+
         self.depth_map_queue.push_back(depth_map);
         if self.depth_map_queue.len() > self.depth_map_queue_size {
             self.depth_map_queue.pop_front();
@@ -209,14 +213,6 @@ impl Locator {
                         pixel.0[0] = difference;
                     }
                 });
-        });
-
-        camera_points_filtered.into_iter().for_each(|point| {
-            let (u, v, depth) = point;
-            let background_depth = self.background_depth_map.get_pixel_mut(u, v);
-            if depth > background_depth.0[0] {
-                background_depth.0[0] = depth;
-            }
         });
 
         difference_depth_map
@@ -417,12 +413,21 @@ mod tests {
         let mut locator = Locator::new(0.5, 10, 0.1, 10.0, 100.0, 1);
         locator.background_depth_map = ImageBuffer::new(10, 10);
 
-        let points = vec![Point3::new(2.0, 3.0, 1.0)];
-
+        let mut points = vec![Point3::new(4.0, 6.0, 2.0)];
         let depth_map =
             locator.get_robot_depth_map(&points, &lidar_to_camera_transform, &camera_intrinsic);
 
+        let background_pixel = locator.background_depth_map.get_pixel(2, 3);
         let pixel = depth_map.get_pixel(2, 3);
+        assert_approx_eq!(background_pixel.0[0], 2.0);
+        assert_approx_eq!(pixel.0[0], 0.0);
+
+        points = vec![Point3::new(2.0, 3.0, 1.0)];
+        let depth_map =
+            locator.get_robot_depth_map(&points, &lidar_to_camera_transform, &camera_intrinsic);
+        let background_pixel = locator.background_depth_map.get_pixel(2, 3);
+        let pixel = depth_map.get_pixel(2, 3);
+        assert_approx_eq!(background_pixel.0[0], 2.0);
         assert_approx_eq!(pixel.0[0], 1.0);
     }
 }
