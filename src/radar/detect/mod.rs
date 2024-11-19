@@ -13,7 +13,7 @@ use raqote::DrawTarget;
 use tracing::{debug, info, span, trace, Level};
 
 use vis::{
-    display_window_and_waitkey, draw_rect_on_draw_target, draw_text_on_draw_target,
+    display_window_draw_target_and_waitkey, draw_rect_on_draw_target, draw_text_on_draw_target,
     get_color_from_robot_label,
 };
 pub use yolo::{BBox, Execution};
@@ -365,7 +365,7 @@ impl RobotDetector {
             }
         }
 
-        display_window_and_waitkey(image, &dt).context("Failed to display window")?;
+        display_window_draw_target_and_waitkey(image, &dt).context("Failed to display window")?;
 
         Ok(())
     }

@@ -126,7 +126,47 @@ pub fn draw_text_on_draw_target(
     Ok(())
 }
 
-pub fn display_window_and_waitkey(image: &DynamicImage, draw_target: &DrawTarget) -> Result<()> {
+#[allow(unused)]
+pub fn display_window_and_waitkey(image: &DynamicImage) -> Result<()> {
+    let (width, height) = image.dimensions();
+    let image = image.clone();
+
+    let window = show_image::context().run_function_wait(move |context| -> Result<_> {
+        let mut window = context
+            .create_window(
+                "vis",
+                WindowOptions {
+                    size: Some([width, height]),
+                    ..WindowOptions::default()
+                },
+            )
+            .context("Failed to create window")?;
+        window.set_image(
+            "picture",
+            &image
+                .as_image_view()
+                .context("Failed to image view of original image")?,
+        );
+        Ok(window.proxy())
+    })?;
+
+    for event in window.event_channel().unwrap() {
+        if let WindowEvent::KeyboardInput(event) = event {
+            if event.input.key_code == Some(VirtualKeyCode::Escape)
+                && event.input.state.is_pressed()
+            {
+                break;
+            }
+        }
+    }
+
+    Ok(())
+}
+
+pub fn display_window_draw_target_and_waitkey(
+    image: &DynamicImage,
+    draw_target: &DrawTarget,
+) -> Result<()> {
     let (width, height) = image.dimensions();
     let image = image.clone();
     let overlay: show_image::Image = draw_target.into();
