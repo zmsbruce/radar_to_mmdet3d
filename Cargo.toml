@@ -1,5 +1,5 @@
 [package]
-name = "rm_radar_to_mmdet3d"
+name = "radar_to_mmdet3d"
 version = "0.1.0"
 edition = "2021"
 
