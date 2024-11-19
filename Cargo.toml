@@ -21,6 +21,7 @@ rayon = "1.10.0"
 font-kit = "0.14.2"
 lazy_static = "1.5.0"
 gtk = "0.18.1"
+opencv = "0.93.4"
 
 [dev-dependencies]
 tempfile = "3.3"
