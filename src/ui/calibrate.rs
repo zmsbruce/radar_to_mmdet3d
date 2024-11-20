@@ -181,59 +181,67 @@ impl WorldToCameraCalibrator {
             .borrow()
             .add_events(EventMask::BUTTON_PRESS_MASK | EventMask::BUTTON_RELEASE_MASK);
 
-        image_widget
-            .borrow()
-            .connect_button_press_event(move |_, event| {
-                trace!("Button press event triggered.");
+        self.window.connect_button_press_event(move |_, event| {
+            trace!("Button press event triggered.");
 
-                let (x, y) = event.position();
-                let event_button = event.button();
-                let event_type = event.event_type();
-                if event_button == 1 {
-                    match event_type {
-                        EventType::DoubleButtonPress => {
-                            debug!("Left button with double press detected.");
-                            if *selecting_points.borrow() {
-                                *selecting_points.borrow_mut() = false;
-                                info!("Finished selecting points.");
-                            } else {
-                                *selecting_points.borrow_mut() = true;
-                                points.borrow_mut().clear();
-                                points.borrow_mut().push((x, y));
-                                info!("Started selecting points. First point: ({}, {})", x, y);
-                            }
-                        }
-                        EventType::ButtonPress => {
-                            debug!("Left button with single press detected.");
-                            if *selecting_points.borrow() {
-                                points.borrow_mut().push((x, y));
-                                info!("Added point: ({}, {})", x, y);
-                            } else {
-                                trace!("Ignored because points selection is not started.");
-                            }
-                        }
-                        _ => {
-                            trace!(
-                                "Left button with event {} detected and ignored.",
-                                event_type
-                            );
+            let (x, y) = event.position();
+            let event_button = event.button();
+            let event_type = event.event_type();
+            if event_button == 1 {
+                match event_type {
+                    EventType::DoubleButtonPress => {
+                        debug!("Left button with double press detected.");
+                        if *selecting_points.borrow() {
+                            *selecting_points.borrow_mut() = false;
+                            points.borrow_mut().pop();
+                            info!("Finished selecting points. Points: {:?}", points.borrow());
+                            Propagation::Stop
+                        } else {
+                            *selecting_points.borrow_mut() = true;
+                            points.borrow_mut().clear();
+                            points.borrow_mut().push((x, y));
+                            info!("Started selecting points. First point: ({}, {})", x, y);
+                            Propagation::Stop
                         }
                     }
-                } else if event_button == 3 && event_type == EventType::ButtonPress {
-                    debug!("Right button with single press detected.");
-                    if *selecting_points.borrow() {
-                        *selecting_points.borrow_mut() = false;
-                        points.borrow_mut().clear();
-                        info!("Cancelled selecting points.");
+                    EventType::ButtonPress => {
+                        debug!("Left button with single press detected.");
+                        if *selecting_points.borrow() {
+                            points.borrow_mut().push((x, y));
+                            info!("Added point: ({}, {})", x, y);
+                            Propagation::Stop
+                        } else {
+                            trace!("Ignored because points selection is not started.");
+                            Propagation::Proceed
+                        }
                     }
-                } else {
-                    debug!(
-                        "Button {} with event {} detected and ignored.",
-                        event_button, event_type
-                    );
+                    _ => {
+                        trace!(
+                            "Left button with event {} detected and ignored.",
+                            event_type
+                        );
+                        Propagation::Proceed
+                    }
                 }
+            } else if event_button == 3 && event_type == EventType::ButtonPress {
+                debug!("Right button with single press detected.");
+                if *selecting_points.borrow() {
+                    *selecting_points.borrow_mut() = false;
+                    points.borrow_mut().clear();
+                    info!("Cancelled selecting points.");
+                    Propagation::Stop
+                } else {
+                    trace!("Ignored because point selection not started.");
+                    Propagation::Proceed
+                }
+            } else {
+                debug!(
+                    "Button {} with event {} detected and ignored.",
+                    event_button, event_type
+                );
                 Propagation::Proceed
-            });
+            }
+        });
         trace!("Window connected to point selection event.");
     }
 }
