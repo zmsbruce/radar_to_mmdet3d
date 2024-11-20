@@ -6,11 +6,11 @@ mod undistort;
 use anyhow::{Context, Result};
 use config::RadarConfig;
 use image::DynamicImage;
-use locate::{Locator, RobotLocation};
-
-use detect::{Execution, RobotDetection, RobotDetector};
 use nalgebra::{Matrix3, Matrix4, Point3, Vector5};
 use tracing::{debug, span, trace, Level};
+
+use detect::{Execution, RobotDetection, RobotDetector};
+use locate::{Locator, RobotLocation};
 use undistort::undistort_image;
 
 #[derive(Debug)]
@@ -19,7 +19,7 @@ pub struct RobotInfo {
     location: RobotLocation,
 }
 
-pub struct RadarInstanceConfig {
+pub struct RadarInstanceParam {
     camera_intrinsic: Matrix3<f32>,
     distortion: Vector5<f32>,
     lidar_to_world_transform: Matrix4<f32>,
@@ -112,18 +112,15 @@ impl Radar {
         &mut self,
         image: &DynamicImage,
         point_cloud: &Vec<Point3<f32>>,
-        instance_config: &mut RadarInstanceConfig,
+        instance: &mut RadarInstanceParam,
     ) -> Result<Vec<RobotInfo>> {
         let span = span!(Level::TRACE, "Radar::detect_and_locate");
         let _enter = span.enter();
 
         trace!("Undistorting image...");
-        let image_undistorted = undistort_image(
-            image,
-            &mut instance_config.camera_intrinsic,
-            &instance_config.distortion,
-        )
-        .context("Failed to undistort image")?;
+        let image_undistorted =
+            undistort_image(image, &mut instance.camera_intrinsic, &instance.distortion)
+                .context("Failed to undistort image")?;
 
         trace!("Running detection and location...");
         let detect_result = self.robot_detector.detect(&image_undistorted)?;
@@ -131,9 +128,9 @@ impl Radar {
             &point_cloud,
             &detect_result,
             &image_undistorted,
-            &instance_config.lidar_to_world_transform,
-            &instance_config.lidar_to_camera_transform,
-            &instance_config.camera_intrinsic,
+            &instance.lidar_to_world_transform,
+            &instance.lidar_to_camera_transform,
+            &instance.camera_intrinsic,
         )?;
 
         let robots = detect_result
