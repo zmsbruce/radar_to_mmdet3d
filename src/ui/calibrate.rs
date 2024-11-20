@@ -59,7 +59,7 @@ impl WorldToCameraCalibrator {
         right_button.set_margin_end(10);
 
         let hint_label = Label::new(Some("This is a label with some information."));
-        hint_label.set_halign(gtk::Align::Center);
+        hint_label.set_halign(gtk::Align::Fill);
         hint_label.set_hexpand(true);
 
         let hbox = GtkBox::new(Orientation::Horizontal, 10);
