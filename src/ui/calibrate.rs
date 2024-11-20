@@ -58,14 +58,14 @@ impl WorldToCameraCalibrator {
         right_button.set_width_request(60);
         right_button.set_margin_end(10);
 
-        let info_label = Label::new(Some("This is a label with some information."));
-        info_label.set_halign(gtk::Align::Center);
-        info_label.set_hexpand(true);
+        let hint_label = Label::new(Some("This is a label with some information."));
+        hint_label.set_halign(gtk::Align::Center);
+        hint_label.set_hexpand(true);
 
         let hbox = GtkBox::new(Orientation::Horizontal, 10);
         hbox.set_margin_top(10);
         hbox.add(&left_button);
-        hbox.add(&info_label);
+        hbox.add(&hint_label);
         hbox.add(&right_button);
 
         let vbox = GtkBox::new(Orientation::Vertical, 10);
@@ -76,7 +76,6 @@ impl WorldToCameraCalibrator {
 
         let points = Rc::new(RefCell::new(Vec::new()));
         let selecting_points = Rc::new(RefCell::new(false));
-
         let calibrator = Self {
             window,
             points,
@@ -90,7 +89,8 @@ impl WorldToCameraCalibrator {
 
         let image_pixbuf = Rc::new(RefCell::new(image_pixbuf));
         let image_widget = Rc::new(RefCell::new(image_widget));
-        calibrator.connect_point_selection(image_widget.clone());
+        let hint_label = Rc::new(RefCell::new(hint_label));
+        calibrator.connect_point_selection(image_widget.clone(), hint_label.clone());
         calibrator.connect_size_allocate(image_pixbuf.clone(), image_widget.clone());
 
         Ok(calibrator)
@@ -167,7 +167,17 @@ impl WorldToCameraCalibrator {
         trace!("Window connected to size allocate event;");
     }
 
-    fn connect_point_selection(&self, image_widget: Rc<RefCell<Image>>) {
+    fn update_hint(hint_label: Rc<RefCell<Label>>, text: &str) {
+        hint_label.borrow().set_markup(&format!(
+            "<span font_size='large' weight='bold'>{text}</span>"
+        ));
+    }
+
+    fn connect_point_selection(
+        &self,
+        image_widget: Rc<RefCell<Image>>,
+        hint_label: Rc<RefCell<Label>>,
+    ) {
         let span = span!(
             Level::TRACE,
             "WorldToCameraCalibrator::connect_point_selection"
@@ -176,6 +186,8 @@ impl WorldToCameraCalibrator {
 
         let points = self.points.clone();
         let selecting_points = self.selecting_points.clone();
+
+        Self::update_hint(hint_label.clone(), "双击开始选点");
 
         image_widget
             .borrow()
@@ -195,12 +207,19 @@ impl WorldToCameraCalibrator {
                             *selecting_points.borrow_mut() = false;
                             points.borrow_mut().pop();
                             info!("Finished selecting points. Points: {:?}", points.borrow());
+
+                            Self::update_hint(hint_label.clone(), "选点已保存。双击继续开始选点");
                             Propagation::Stop
                         } else {
                             *selecting_points.borrow_mut() = true;
                             points.borrow_mut().clear();
                             points.borrow_mut().push((x, y));
                             info!("Started selecting points. First point: ({}, {})", x, y);
+
+                            Self::update_hint(
+                                hint_label.clone(),
+                                "单击添加选点，双击添加最后一个点并结束选点",
+                            );
                             Propagation::Stop
                         }
                     }
@@ -229,6 +248,8 @@ impl WorldToCameraCalibrator {
                     *selecting_points.borrow_mut() = false;
                     points.borrow_mut().clear();
                     info!("Cancelled selecting points.");
+
+                    Self::update_hint(hint_label.clone(), "选点已取消。双击重新开始选点");
                     Propagation::Stop
                 } else {
                     trace!("Ignored because point selection not started.");
