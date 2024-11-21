@@ -117,19 +117,22 @@ impl Radar {
         let _enter = span.enter();
 
         trace!("Undistorting image...");
-        let image_undistorted =
+        let (image_undistorted, new_camera_matrix) =
             undistort_image(image, &mut instance.camera_intrinsic, &instance.distortion)
                 .context("Failed to undistort image")?;
 
         trace!("Running detection and location...");
         let detect_result = self.robot_detector.detect(&image_undistorted)?;
-        let locate_result = self.locator.locate_detections(
-            &point_cloud,
-            &detect_result,
-            &image_undistorted,
-            &instance.lidar_to_camera_transform,
-            &instance.camera_intrinsic,
-        )?;
+        let locate_result = self
+            .locator
+            .locate_detections(
+                &point_cloud,
+                &detect_result,
+                &image_undistorted,
+                &instance.lidar_to_camera_transform,
+                &new_camera_matrix,
+            )
+            .context("Failed to locate detections")?;
 
         let robots = detect_result
             .into_iter()

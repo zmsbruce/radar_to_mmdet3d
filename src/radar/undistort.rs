@@ -85,11 +85,36 @@ where
     Ok(transposed_mat)
 }
 
+fn mat_to_matrix<T, const R: usize, const C: usize>(
+    mat: &impl MatTraitConst,
+) -> Result<Matrix<T, Const<R>, Const<C>, ArrayStorage<T, R, C>>>
+where
+    T: nalgebra::Scalar + opencv::prelude::DataType,
+{
+    if mat.rows() != R as i32 && mat.cols() != C as i32 {
+        return Err(anyhow!(
+            "Mat shape is not correct, expected {}x{}, got {}x{}",
+            R,
+            C,
+            mat.rows(),
+            mat.cols()
+        ));
+    }
+
+    let mat_data = mat
+        .data_typed::<T>()
+        .context("Failed to get Mat of data typed")?;
+
+    let matrix = Matrix::<T, Const<R>, Const<C>, ArrayStorage<T, R, C>>::from_row_slice(mat_data);
+
+    Ok(matrix)
+}
+
 pub fn undistort_image(
     img: &DynamicImage,
-    camera_matrix: &mut Matrix3<f32>,
+    camera_matrix: &Matrix3<f32>,
     dist_coeffs: &Vector5<f32>,
-) -> Result<DynamicImage> {
+) -> Result<(DynamicImage, Matrix3<f32>)> {
     let span = span!(Level::TRACE, "Radar::undistort_dynamic_image");
     let _enter = span.enter();
 
@@ -134,8 +159,12 @@ pub fn undistort_image(
     trace!("Converting undistorted Mat back to DynamicImage");
     let result_img = mat_to_dynamic_image(&cropped_img)?;
 
+    trace!("Converting new camera matrix from Mat to Matrix");
+    let new_camera_matrix = mat_to_matrix(&new_camera_matrix_mat)
+        .context("Failed to convert new camera matrix from Mat to Matrix")?;
+
     trace!("Undistortion process completed");
-    Ok(result_img)
+    Ok((result_img, new_camera_matrix))
 }
 
 #[cfg(test)]
@@ -160,9 +189,33 @@ mod tests {
 
         for row in 0..4 {
             for col in 0..3 {
-                let pixel_mat = mat.at_2d::<f64>(row, col)?;
-                let pixel_matrix = matrix[(row as usize, col as usize)];
-                assert_approx_eq!(pixel_mat, pixel_matrix);
+                let elem_mat = mat.at_2d::<f64>(row, col)?;
+                let elem_matrix = matrix[(row as usize, col as usize)];
+                assert_approx_eq!(elem_mat, elem_matrix);
+            }
+        }
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_mat_to_matrix() -> Result<()> {
+        #[rustfmt::skip]
+        let mat_slice: [f64; 12]  = [
+            1.0, 2.0, 3.0,
+            4.0, 5.0, 6.0,
+            7.0, 8.0, 9.0,
+            10.0, 11.0, 12.0
+        ];
+        let mat = Mat::new_rows_cols_with_data(4, 3, &mat_slice)?;
+
+        let matrix: Matrix4x3<f64> = mat_to_matrix(&mat)?;
+
+        for row in 0..4 {
+            for col in 0..3 {
+                let elem_mat = mat.at_2d::<f64>(row, col)?;
+                let elem_matrix = matrix[(row as usize, col as usize)];
+                assert_approx_eq!(elem_mat, elem_matrix);
             }
         }
 
@@ -262,7 +315,7 @@ mod tests {
         let mut camera_matrix = create_camera_matrix();
         let dist_coeffs = create_dist_coeffs();
 
-        let result_img = undistort_image(&test_img, &mut camera_matrix, &dist_coeffs)?;
+        let (result_img, _) = undistort_image(&test_img, &mut camera_matrix, &dist_coeffs)?;
         assert_eq!(result_img.dimensions(), (2, 1));
 
         if let DynamicImage::ImageRgb8(rgb_image) = result_img {
