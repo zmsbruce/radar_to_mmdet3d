@@ -11,6 +11,8 @@ use cluster::dbscan;
 
 mod cluster;
 
+const DEPTH_MAP_QUEUE_SIZE: usize = 4;
+
 #[derive(Debug)]
 pub struct RobotLocation {
     pub center: Point3<f32>,
@@ -27,7 +29,6 @@ pub struct Locator {
     max_valid_distance: f32,
     background_depth_map: ImageBuffer<Luma<f32>, Vec<f32>>,
     depth_map_queue: VecDeque<ImageBuffer<Luma<f32>, Vec<f32>>>,
-    depth_map_queue_size: usize,
 }
 
 impl Locator {
@@ -37,18 +38,16 @@ impl Locator {
         min_distance_to_background: f32,
         max_distance_to_background: f32,
         max_valid_distance: f32,
-        depth_map_queue_size: usize,
     ) -> Self {
         let span = span!(Level::TRACE, "Locator::new");
         let _enter = span.enter();
 
         debug!(
-            "Initializing Locator with cluster epsilon: {}, distance to background: {}~{}, max valid distance: {}, depth map queue size: {}",
+            "Initializing Locator with cluster epsilon: {}, distance to background: {}~{}, max valid distance: {}",
             cluster_epsilon,
             min_distance_to_background,
             max_distance_to_background,
             max_valid_distance,
-            depth_map_queue_size
         );
 
         Self {
@@ -58,8 +57,7 @@ impl Locator {
             max_distance_to_background,
             max_valid_distance,
             background_depth_map: ImageBuffer::default(),
-            depth_map_queue: VecDeque::with_capacity(depth_map_queue_size),
-            depth_map_queue_size,
+            depth_map_queue: VecDeque::with_capacity(DEPTH_MAP_QUEUE_SIZE),
         }
     }
 
@@ -220,7 +218,7 @@ impl Locator {
             depth_map.put_pixel(*u, *v, Luma([*depth]));
         });
         self.depth_map_queue.push_back(depth_map);
-        if self.depth_map_queue.len() > self.depth_map_queue_size {
+        if self.depth_map_queue.len() > DEPTH_MAP_QUEUE_SIZE {
             self.depth_map_queue.pop_front();
         }
 
@@ -454,7 +452,7 @@ mod tests {
         let camera_intrinsic = Matrix3::<f32>::identity();
         let lidar_to_camera_transform = Matrix4::<f32>::identity();
 
-        let mut locator = Locator::new(0.5, 10, 0.1, 10.0, 100.0, 1);
+        let mut locator = Locator::new(0.5, 10, 0.1, 10.0, 100.0);
         locator.background_depth_map = ImageBuffer::new(10, 10);
 
         let points = vec![Point3::new(2.0, 3.0, 1.0)];

@@ -1,39 +1,44 @@
-use std::fs;
+use std::{collections::HashMap, fs};
 
-use anyhow::{Context, Ok, Result};
+use anyhow::{Context, Result};
+use nalgebra::{Matrix3, Matrix4, Vector5};
 use serde::Deserialize;
 use tracing::{debug, span, trace, Level};
 
-#[derive(Debug, Deserialize)]
-pub struct RadarConfig {
-    pub detect: DetectorConfig,
-    pub locate: LocatorConfig,
+use super::RadarInstanceParam;
+
+pub mod default {
+    pub const CAR_CONF_THRESH: f32 = 0.30;
+    pub const ARMOR_CONF_THRESH: f32 = 0.65;
+
+    pub const CAR_NMS_THRESH: f32 = 0.50;
+    pub const ARMOR_NMS_THRESH: f32 = 0.75;
+
+    pub const CLUSTER_EPSILON: f32 = 0.3;
+    pub const CLUSTER_MIN_POINTS: usize = 8;
+
+    pub const MIN_DISTANCE_TO_BACKGROUND: f32 = 0.2;
+    pub const MAX_DISTANCE_TO_BACKGROUND: f32 = 8.0;
+
+    pub const MAX_VALID_DISTANCE: f32 = 29.3;
 }
 
 #[derive(Debug, Deserialize)]
-pub struct DetectorConfig {
-    pub car_onnx_path: String,
-    pub armor_onnx_path: String,
-    pub car_conf_thresh: f32,
-    pub armor_conf_thresh: f32,
-    pub car_nms_thresh: f32,
-    pub armor_nms_thresh: f32,
-    pub execution: String,
+struct RadarInstanceConfig {
+    name: String,
+    intrinsic: [f32; 9],
+    distortion: [f32; 5],
+    lidar_to_camera: [f32; 16],
 }
 
 #[derive(Debug, Deserialize)]
-pub struct LocatorConfig {
-    pub cluster_epsilon: f32,
-    pub cluster_min_points: usize,
-    pub min_distance_to_background: f32,
-    pub max_distance_to_background: f32,
-    pub max_valid_distance: f32,
-    pub depth_map_queue_size: usize,
+pub struct RadarInstancesConfig {
+    instances: Vec<RadarInstanceConfig>,
 }
 
-impl RadarConfig {
+impl RadarInstancesConfig {
     pub fn from_file(filename: &str) -> Result<Self> {
-        let span = span!(Level::TRACE, "RadarConfig::from_file");
+        let span = span!(Level::TRACE, "RadarInstancesConfig::from_file");
         let _enter = span.enter();
 
         trace!("Reading content from file {filename}...");
@@ -46,5 +51,24 @@ impl RadarConfig {
 
         debug!("Configurations: {:#?}", config);
         Ok(config)
+    }
+
+    pub fn to_params(&self) -> HashMap<String, RadarInstanceParam> {
+        let param_mapping: HashMap<String, RadarInstanceParam> = self
+            .instances
+            .iter()
+            .map(|config| {
+                (
+                    config.name.clone(),
+                    RadarInstanceParam {
+                        camera_intrinsic: Matrix3::from_row_slice(&config.intrinsic),
+                        distortion: Vector5::from_row_slice(&config.distortion),
+                        lidar_to_camera_transform: Matrix4::from_row_slice(&config.lidar_to_camera),
+                    },
+                )
+            })
+            .collect();
+
+        param_mapping
     }
 }

@@ -4,7 +4,7 @@ mod locate;
 mod undistort;
 
 use anyhow::{Context, Result};
-use config::RadarConfig;
+use config::default::*;
 use image::DynamicImage;
 use nalgebra::{Matrix3, Matrix4, Point3, Vector5};
 use tracing::{debug, info, span, trace, Level};
@@ -82,5 +82,27 @@ impl<'a> Radar<'a> {
 
         debug!("Rdlt result: {:#?}", robots);
         Ok(robots)
+    }
+}
+
+impl Default for Radar<'_> {
+    fn default() -> Self {
+        Self {
+            robot_detector: RobotDetector::new(
+                include_bytes!("../../assets/model/car.onnx"),
+                include_bytes!("../../assets/model/armor.onnx"),
+                CAR_CONF_THRESH,
+                ARMOR_CONF_THRESH,
+                CAR_NMS_THRESH,
+                ARMOR_NMS_THRESH,
+            ),
+            locator: Locator::new(
+                CLUSTER_EPSILON,
+                CLUSTER_MIN_POINTS,
+                MIN_DISTANCE_TO_BACKGROUND,
+                MAX_DISTANCE_TO_BACKGROUND,
+                MAX_VALID_DISTANCE,
+            ),
+        }
     }
 }
