@@ -51,21 +51,21 @@ impl TryFrom<&str> for Execution {
     }
 }
 
-pub struct Yolo {
+pub struct Yolo<'a> {
     conf_threshold: f32,
     nms_threshold: f32,
     input_size: (u32, u32),
-    onnx_path: String,
+    onnx: &'a [u8],
     model: Option<Session>,
 }
 
-impl Debug for Yolo {
+impl Debug for Yolo<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Yolo")
             .field("conf_threshold", &self.conf_threshold)
             .field("nms_threshold", &self.nms_threshold)
             .field("input_size", &self.input_size)
-            .field("onnx_path", &self.onnx_path)
+            .field("onnx", &self.onnx.as_ptr())
             .field(
                 "model",
                 &if self.model.is_some() {
@@ -78,9 +78,9 @@ impl Debug for Yolo {
     }
 }
 
-impl Yolo {
-    pub fn new(
-        onnx_path: &str,
+impl<'a> Yolo<'a> {
+    pub fn new<'b: 'a>(
+        onnx: &'a [u8],
         conf_threshold: f32,
         nms_threshold: f32,
         input_size: (u32, u32),
@@ -88,35 +88,36 @@ impl Yolo {
         let span = span!(Level::TRACE, "Yolo::new");
         let _enter = span.enter();
 
-        debug!("Initializing YOLO with config: conf_threshold={}, nms_threshold={}, input_size={:?}, onnx_path={}", 
-              conf_threshold, nms_threshold, input_size, onnx_path);
+        debug!("Initializing YOLO with config: conf_threshold={}, nms_threshold={}, input_size={:?}, onnx={:p}", 
+              conf_threshold, nms_threshold, input_size, onnx.as_ptr());
 
         Self {
             conf_threshold,
             nms_threshold,
             input_size,
-            onnx_path: onnx_path.to_string(),
+            onnx,
             model: None,
         }
     }
 
     #[inline]
-    pub fn is_session_built(&self) -> bool {
+    pub fn is_model_built(&self) -> bool {
         self.model.is_some()
     }
 
-    pub fn build(mut self, execution: Execution) -> Result<Self> {
+    pub fn build(&mut self, execution: Execution) -> Result<()> {
         if self.model.is_some() {
             warn!("Yolo {:#?} has already been built.", self);
-            return Ok(self);
+            return Ok(());
         }
 
         let span = span!(Level::TRACE, "Yolo::build");
         let _enter = span.enter();
 
         info!(
-            "Building the ONNX model from file: {} and execution: {:?}",
-            self.onnx_path, execution
+            "Building the ONNX model from onnx: {:p} and execution: {:?}",
+            self.onnx.as_ptr(),
+            execution
         );
         let providers = match execution {
             Execution::TensorRT => vec![TensorRTExecutionProvider::default().build()],
@@ -135,13 +136,13 @@ impl Yolo {
             .with_execution_providers(providers)
             .context("Failed to register execution providers")?
             .with_optimization_level(GraphOptimizationLevel::Level3)?
-            .commit_from_file(&self.onnx_path)
-            .context("Failed to commit session from file")?;
+            .commit_from_memory(&self.onnx)
+            .context("Failed to commit session from memory")?;
 
         self.model = Some(session);
 
         trace!("ONNX model successfully built.");
-        Ok(self)
+        Ok(())
     }
 
     pub fn infer(&self, image: &DynamicImage) -> Result<Vec<Detection>> {
@@ -405,7 +406,7 @@ mod tests {
             }
         });
 
-        let yolo = Yolo::new("", 0.0, 0.0, (2, 2));
+        let yolo = Yolo::new(&[], 0.0, 0.0, (2, 2));
         let dynamic_image = DynamicImage::ImageRgb8(img_buffer);
         let (processed_array, original_dims) = yolo.preprocess_image(&dynamic_image)?;
 
@@ -563,7 +564,7 @@ mod tests {
         let detections = vec![detection1, detection2, detection3];
 
         let nms_threshold = 0.3;
-        let yolo = Yolo::new("", 0.0, nms_threshold, (0, 0));
+        let yolo = Yolo::new(&[], 0.0, nms_threshold, (0, 0));
         let final_detections = yolo.non_max_suppression(detections);
 
         assert_eq!(
@@ -605,7 +606,7 @@ mod tests {
 
         let conf_threshold = 0.5;
         let nms_threshold = 0.4;
-        let yolo = Yolo::new("", conf_threshold, nms_threshold, (1, 1));
+        let yolo = Yolo::new(&[], conf_threshold, nms_threshold, (1, 1));
 
         let detections = yolo.process_yolov8_output(mock_output, (1, 1));
 
@@ -620,8 +621,13 @@ mod tests {
 
     #[test]
     fn test_yolo() -> Result<()> {
-        let yolo =
-            Yolo::new("assets/test/yolov8n.onnx", 0.5, 0.75, (640, 640)).build(Execution::CPU)?;
+        let mut yolo = Yolo::new(
+            include_bytes!("../../../assets/test/yolov8n.onnx"),
+            0.5,
+            0.75,
+            (640, 640),
+        );
+        yolo.build(Execution::CPU)?;
 
         let img = image::open(PathBuf::from_str("assets/test/zidane.jpg")?)?;
         let detections = yolo.infer(&img)?;

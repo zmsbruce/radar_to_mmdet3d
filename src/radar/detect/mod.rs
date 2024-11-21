@@ -166,49 +166,61 @@ impl RobotDetection {
     }
 }
 
-pub struct RobotDetector {
-    car_detector: Yolo,
-    armor_detector: Yolo,
+pub struct RobotDetector<'a> {
+    car_detector: Yolo<'a>,
+    armor_detector: Yolo<'a>,
 }
 
-impl RobotDetector {
+impl<'a> RobotDetector<'a> {
     pub fn new(
-        car_onnx_path: &str,
-        armor_onnx_path: &str,
+        car_onnx: &'a [u8],
+        armor_onnx: &'a [u8],
         car_conf_thresh: f32,
         armor_conf_thresh: f32,
         car_nms_thresh: f32,
         armor_nms_thresh: f32,
-        execution: Execution,
-    ) -> Result<Self> {
+    ) -> Self {
         let span = span!(Level::TRACE, "RobotDetector::new");
         let _enter = span.enter();
 
         info!("Initializing car detector...");
-        let car_detector = Yolo::new(car_onnx_path, car_conf_thresh, car_nms_thresh, (640, 640))
-            .build(execution)?;
+        let car_detector = Yolo::new(car_onnx, car_conf_thresh, car_nms_thresh, (640, 640));
 
         info!("Initializing armor detector...");
-        let armor_detector = Yolo::new(
-            armor_onnx_path,
-            armor_conf_thresh,
-            armor_nms_thresh,
-            (640, 640),
-        )
-        .build(execution)?;
+        let armor_detector = Yolo::new(armor_onnx, armor_conf_thresh, armor_nms_thresh, (640, 640));
 
         info!("Robot detector initialized.");
-        Ok(Self {
+
+        Self {
             car_detector,
             armor_detector,
-        })
+        }
+    }
+
+    #[inline]
+    pub fn is_models_built(&self) -> bool {
+        self.car_detector.is_model_built() && self.armor_detector.is_model_built()
+    }
+
+    pub fn build_models(&mut self, execution: Execution) -> Result<()> {
+        self.car_detector
+            .build(execution)
+            .context("Failed to build car detector")?;
+
+        self.armor_detector
+            .build(execution)
+            .context("Failed to build armor detector")?;
+
+        Ok(())
     }
 
     pub fn detect(&self, image: &DynamicImage) -> Result<Vec<RobotDetection>> {
         let span = span!(Level::TRACE, "RobotDetector::detect");
         let _enter = span.enter();
 
-        assert!(self.car_detector.is_session_built() && self.armor_detector.is_session_built());
+        if !self.is_models_built() {
+            return Err(anyhow!("Models are not built"));
+        }
 
         trace!("Running car detector inference...");
         let car_detections = self.car_detector.infer(image)?;
@@ -381,15 +393,16 @@ mod tests {
 
     #[test]
     fn test_robot_detector() -> Result<()> {
-        let robot_detector = RobotDetector::new(
-            "assets/test/car.onnx",
-            "assets/test/armor.onnx",
+        let mut robot_detector = RobotDetector::new(
+            include_bytes!("../../../assets/test/car.onnx"),
+            include_bytes!("../../../assets/test/armor.onnx"),
             0.30,
             0.45,
             0.50,
             0.75,
-            Execution::CPU,
-        )?;
+        );
+
+        robot_detector.build_models(Execution::CPU)?;
 
         let image =
             image::open(PathBuf::from("assets/test/frame.png")).context("Failed to read image")?;
