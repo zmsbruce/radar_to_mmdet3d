@@ -22,7 +22,6 @@ pub struct RobotInfo {
 pub struct RadarInstanceParam {
     camera_intrinsic: Matrix3<f32>,
     distortion: Vector5<f32>,
-    lidar_to_world_transform: Matrix4<f32>,
     lidar_to_camera_transform: Matrix4<f32>,
 }
 
@@ -128,7 +127,6 @@ impl Radar {
             &point_cloud,
             &detect_result,
             &image_undistorted,
-            &instance.lidar_to_world_transform,
             &instance.lidar_to_camera_transform,
             &instance.camera_intrinsic,
         )?;

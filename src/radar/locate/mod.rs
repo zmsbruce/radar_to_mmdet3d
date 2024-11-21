@@ -68,7 +68,6 @@ impl Locator {
         points: &[Point3<f32>],
         detections: &[RobotDetection],
         input_image: &DynamicImage,
-        lidar_to_world_transform: &Matrix4<f32>,
         lidar_to_camera_transform: &Matrix4<f32>,
         camera_intrinsic: &Matrix3<f32>,
     ) -> Result<Vec<Option<RobotLocation>>> {
@@ -120,7 +119,6 @@ impl Locator {
             &bboxes,
             robot_depth_map,
             pixels_category_mapping,
-            lidar_to_world_transform,
             &camera_to_lidar_transform,
             &camera_intrinsic_inverse,
         );
@@ -312,7 +310,6 @@ impl Locator {
         bboxes: &[BBox],
         difference_depth_map: ImageBuffer<Luma<f32>, Vec<f32>>,
         cluster_result: HashMap<(u32, u32), isize>,
-        lidar_to_world_transform: &Matrix4<f32>,
         camera_to_lidar_transform: &Matrix4<f32>,
         camera_intrinsic_inverse: &Matrix3<f32>,
     ) -> Vec<Option<RobotLocation>> {
@@ -368,9 +365,7 @@ impl Locator {
                                     camera_to_lidar_transform,
                                     camera_intrinsic_inverse,
                                 );
-                                let world_point =
-                                    Self::lidar_to_world(&lidar_point, lidar_to_world_transform);
-                                Some(world_point)
+                                Some(lidar_point)
                             } else {
                                 None
                             }
