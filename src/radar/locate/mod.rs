@@ -125,17 +125,6 @@ impl Locator {
         Ok(robot_locations)
     }
 
-    fn lidar_to_world(point: &Point3<f32>, lidar_to_world_transform: &Matrix4<f32>) -> Point3<f32> {
-        let lidar_coor_vector = Vector4::new(point.x, point.y, point.z, 1.0);
-        let world_coor_vector = lidar_to_world_transform * lidar_coor_vector;
-
-        Point3::new(
-            world_coor_vector[0],
-            world_coor_vector[1],
-            world_coor_vector[2],
-        )
-    }
-
     fn image_to_lidar(
         point: &Point3<f32>,
         camera_to_lidar_transform: &Matrix4<f32>,
