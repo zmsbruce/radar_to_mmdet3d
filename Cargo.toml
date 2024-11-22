@@ -15,6 +15,9 @@ chrono = "0.4.38"
 serde = { version = "1.0.215", features = ["derive"] }
 toml = "0.8.19"
 rayon = "1.10.0"
+gstreamer = "0.23.3"
+gstreamer-video = "0.23.3"
+gstreamer-app = "0.23.3"
 
 [dev-dependencies]
 tempfile = "3.3"
