@@ -1,17 +1,15 @@
 mod config;
 mod detect;
 mod locate;
-mod undistort;
 
 use anyhow::{Context, Result};
-use config::default::*;
+use config::{default::*, RadarInstanceConfig};
 use image::DynamicImage;
-use nalgebra::{Matrix3, Matrix4, Point3, Vector5};
+use nalgebra::{Matrix3, Matrix4, Point3};
 use tracing::{debug, info, span, trace, Level};
 
 use detect::{Execution, RobotDetection, RobotDetector};
 use locate::{Locator, RobotLocation};
-use undistort::undistort_image;
 
 #[derive(Debug)]
 pub struct RobotInfo {
@@ -21,8 +19,16 @@ pub struct RobotInfo {
 
 pub struct RadarInstanceParam {
     camera_intrinsic: Matrix3<f32>,
-    distortion: Vector5<f32>,
     lidar_to_camera_transform: Matrix4<f32>,
+}
+
+impl From<RadarInstanceConfig> for RadarInstanceParam {
+    fn from(value: RadarInstanceConfig) -> Self {
+        RadarInstanceParam {
+            camera_intrinsic: Matrix3::from_row_slice(&value.intrinsic),
+            lidar_to_camera_transform: Matrix4::from_row_slice(&value.lidar_to_camera),
+        }
+    }
 }
 
 pub struct Radar<'a> {
@@ -47,21 +53,16 @@ impl<'a> Radar<'a> {
                 .context("Failed to build models")?;
         }
 
-        trace!("Undistorting image...");
-        let (image_undistorted, new_camera_matrix) =
-            undistort_image(image, &mut instance.camera_intrinsic, &instance.distortion)
-                .context("Failed to undistort image")?;
-
         trace!("Running detection and location...");
-        let detect_result = self.robot_detector.detect(&image_undistorted)?;
+        let detect_result = self.robot_detector.detect(&image)?;
         let locate_result = self
             .locator
             .locate_detections(
                 &point_cloud,
                 &detect_result,
-                &image_undistorted,
+                &image,
                 &instance.lidar_to_camera_transform,
-                &new_camera_matrix,
+                &instance.camera_intrinsic,
             )
             .context("Failed to locate detections")?;
 

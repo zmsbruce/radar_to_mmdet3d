@@ -1,11 +1,8 @@
-use std::{collections::HashMap, fs};
+use std::fs;
 
 use anyhow::{Context, Result};
-use nalgebra::{Matrix3, Matrix4, Vector5};
 use serde::Deserialize;
 use tracing::{debug, span, trace, Level};
-
-use super::RadarInstanceParam;
 
 pub mod default {
     pub const CAR_CONF_THRESH: f32 = 0.30;
@@ -24,19 +21,18 @@ pub mod default {
 }
 
 #[derive(Debug, Deserialize)]
-struct RadarInstanceConfig {
-    name: String,
-    intrinsic: [f32; 9],
-    distortion: [f32; 5],
-    lidar_to_camera: [f32; 16],
+pub struct RadarInstanceConfig {
+    pub name: String,
+    pub intrinsic: [f32; 9],
+    pub lidar_to_camera: [f32; 16],
 }
 
 #[derive(Debug, Deserialize)]
-pub struct RadarInstancesConfig {
-    instances: Vec<RadarInstanceConfig>,
+pub struct RadarInstanceArrayConfig {
+    pub instances: Vec<RadarInstanceConfig>,
 }
 
-impl RadarInstancesConfig {
+impl RadarInstanceArrayConfig {
     pub fn from_file(filename: &str) -> Result<Self> {
         let span = span!(Level::TRACE, "RadarInstancesConfig::from_file");
         let _enter = span.enter();
@@ -51,24 +47,5 @@ impl RadarInstancesConfig {
 
         debug!("Configurations: {:#?}", config);
         Ok(config)
-    }
-
-    pub fn to_params(&self) -> HashMap<String, RadarInstanceParam> {
-        let param_mapping: HashMap<String, RadarInstanceParam> = self
-            .instances
-            .iter()
-            .map(|config| {
-                (
-                    config.name.clone(),
-                    RadarInstanceParam {
-                        camera_intrinsic: Matrix3::from_row_slice(&config.intrinsic),
-                        distortion: Vector5::from_row_slice(&config.distortion),
-                        lidar_to_camera_transform: Matrix4::from_row_slice(&config.lidar_to_camera),
-                    },
-                )
-            })
-            .collect();
-
-        param_mapping
     }
 }
