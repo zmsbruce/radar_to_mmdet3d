@@ -17,17 +17,23 @@ pub struct RobotInfo {
     location: RobotLocation,
 }
 
-pub struct RadarInstanceParam {
+pub struct RadarInstance {
     camera_intrinsic: Matrix3<f32>,
     lidar_to_camera_transform: Matrix4<f32>,
 }
 
-impl From<RadarInstanceConfig> for RadarInstanceParam {
-    fn from(value: RadarInstanceConfig) -> Self {
-        RadarInstanceParam {
-            camera_intrinsic: Matrix3::from_row_slice(&value.intrinsic),
-            lidar_to_camera_transform: Matrix4::from_row_slice(&value.lidar_to_camera),
+impl RadarInstance {
+    pub fn from_slice(camera_intrinsic: &[f32; 9], lidar_to_camera_transform: &[f32; 16]) -> Self {
+        Self {
+            camera_intrinsic: Matrix3::from_row_slice(camera_intrinsic),
+            lidar_to_camera_transform: Matrix4::from_row_slice(lidar_to_camera_transform),
         }
+    }
+}
+
+impl From<RadarInstanceConfig> for RadarInstance {
+    fn from(value: RadarInstanceConfig) -> Self {
+        Self::from_slice(&value.intrinsic, &value.lidar_to_camera)
     }
 }
 
@@ -41,7 +47,7 @@ impl<'a> Radar<'a> {
         &mut self,
         image: &DynamicImage,
         point_cloud: &Vec<Point3<f32>>,
-        instance: &mut RadarInstanceParam,
+        instance: &RadarInstance,
     ) -> Result<Vec<RobotInfo>> {
         let span = span!(Level::TRACE, "Radar::detect_and_locate");
         let _enter = span.enter();
@@ -100,10 +106,68 @@ impl Default for Radar<'_> {
             locator: Locator::new(
                 CLUSTER_EPSILON,
                 CLUSTER_MIN_POINTS,
-                MIN_DISTANCE_TO_BACKGROUND,
-                MAX_DISTANCE_TO_BACKGROUND,
+                MIN_VALID_DISTANCE,
                 MAX_VALID_DISTANCE,
             ),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::PathBuf;
+
+    use crate::io::pcd::PcdReader;
+
+    use super::*;
+
+    #[test]
+    fn test_radar() -> Result<()> {
+        let mut radar = Radar::default();
+
+        let image = image::open(PathBuf::from("assets/test/frame.png"))?;
+        let point_cloud: Vec<_> = PcdReader::read_from_file("assets/test/cloud.pcd")?
+            .into_iter()
+            .map(|v| Point3::new(v[0] as f32, v[1] as f32, v[2] as f32))
+            .collect();
+
+        let instance = RadarInstance::from(RadarInstanceConfig {
+            name: "Middle".to_string(),
+            intrinsic: [
+                5314.21858569616,
+                0.0,
+                1275.27037614003,
+                0.0,
+                5314.01731877953,
+                1029.37643928014,
+                0.0,
+                0.0,
+                1.0,
+            ],
+            lidar_to_camera: [
+                -0.00444956,
+                -0.999989,
+                0.00122446,
+                6.50927,
+                0.0173479,
+                -0.00130148,
+                -0.999849,
+                -36.195,
+                0.99984,
+                -0.00442764,
+                0.0173535,
+                19.277,
+                0.0,
+                0.0,
+                0.0,
+                1.0,
+            ],
+        });
+
+        let result = radar.detect_and_locate(&image, &point_cloud, &instance)?;
+
+        println!("{:#?}", result);
+
+        Ok(())
     }
 }

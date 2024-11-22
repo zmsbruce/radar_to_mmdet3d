@@ -11,13 +11,11 @@ pub mod default {
     pub const CAR_NMS_THRESH: f32 = 0.50;
     pub const ARMOR_NMS_THRESH: f32 = 0.75;
 
-    pub const CLUSTER_EPSILON: f32 = 0.3;
-    pub const CLUSTER_MIN_POINTS: usize = 8;
+    pub const CLUSTER_EPSILON: f32 = 300.0;
+    pub const CLUSTER_MIN_POINTS: usize = 10;
 
-    pub const MIN_DISTANCE_TO_BACKGROUND: f32 = 0.2;
-    pub const MAX_DISTANCE_TO_BACKGROUND: f32 = 8.0;
-
-    pub const MAX_VALID_DISTANCE: f32 = 29.3;
+    pub const MIN_VALID_DISTANCE: f32 = 200.0;
+    pub const MAX_VALID_DISTANCE: f32 = 29300.0;
 }
 
 #[derive(Debug, Deserialize)]

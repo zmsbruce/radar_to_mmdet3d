@@ -4,11 +4,17 @@ use std::{
 };
 
 use nalgebra::{Point, RealField, Scalar};
+use tracing::{debug, span, trace, Level};
 
 pub fn dbscan<T, const D: usize>(points: &Vec<Point<T, D>>, eps: T, min_points: usize) -> Vec<isize>
 where
     T: Scalar + Sub + SubAssign + RealField + Copy,
 {
+    let span = span!(Level::TRACE, "dbscan");
+    let _enter = span.enter();
+
+    debug!("Number of points to cluster: {}", points.len());
+
     let mut labels = vec![-1; points.len()];
     let mut cluster_id = 0;
 
@@ -17,10 +23,15 @@ where
             continue;
         }
 
+        trace!("Start getting neighbors of point {}", i);
         let neighbors = region_query(points, i, eps);
+
+        debug!("Neighbors of point {}: {:?}", i, neighbors);
         if neighbors.len() < min_points {
+            trace!("Neighbors number is not enough. Mark it as noise.");
             labels[i] = -2;
         } else {
+            trace!("Expanding cluster for neighbors of point {i} by id {cluster_id}");
             expand_cluster(
                 points,
                 &mut labels,
@@ -34,6 +45,7 @@ where
         }
     }
 
+    debug!("Cluster result: {:?}", labels);
     labels
 }
 
