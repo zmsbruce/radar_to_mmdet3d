@@ -305,8 +305,8 @@ mod tests {
 
         robot_detector.build_models(Execution::CPU)?;
 
-        let image =
-            image::open(PathBuf::from("assets/test/frame.png")).context("Failed to read image")?;
+        let image = image::open(PathBuf::from("assets/test/battlefield.png"))
+            .context("Failed to read image")?;
 
         let detections = robot_detector.detect(&image)?;
         assert_eq!(detections.len(), 6);
