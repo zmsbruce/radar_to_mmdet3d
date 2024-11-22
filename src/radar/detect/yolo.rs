@@ -7,10 +7,7 @@ use ort::{
     inputs, CUDAExecutionProvider, GraphOptimizationLevel, OpenVINOExecutionProvider, Session,
     TensorRTExecutionProvider,
 };
-use raqote::{DrawTarget, SolidSource};
 use tracing::{debug, error, info, span, trace, warn, Level};
-
-use super::vis::{draw_rect_on_draw_target, draw_text_on_draw_target};
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct BBox {
@@ -173,36 +170,6 @@ impl<'a> Yolo<'a> {
         Ok(detections)
     }
 
-    #[allow(unused)]
-    pub fn visualize(img: &DynamicImage, dets: &Vec<Detection>) -> Result<()> {
-        let (width, height) = img.dimensions();
-        let mut dt = DrawTarget::new(width as i32, height as i32);
-
-        for detection in dets {
-            let bbox = detection.bbox;
-            draw_rect_on_draw_target(
-                &mut dt,
-                &bbox,
-                Self::get_color_for_class(detection.class_id as usize),
-                4.,
-            );
-
-            let text = format!("{} {:.2}", detection.class_id, detection.confidence);
-            draw_text_on_draw_target(
-                &mut dt,
-                &text,
-                (
-                    bbox.x_center - bbox.width / 2.0,
-                    bbox.y_center - bbox.height / 2.0,
-                ),
-                40.0,
-            )
-            .context("Failed to draw text")?;
-        }
-
-        Ok(())
-    }
-
     fn preprocess_image(&self, image: &DynamicImage) -> Result<(Array4<f32>, (u32, u32))> {
         let span = span!(Level::TRACE, "Yolo::preprocess_image");
         let _enter = span.enter();
@@ -356,34 +323,6 @@ impl<'a> Yolo<'a> {
         let bbox2_area = (x2_max - x2_min) * (y2_max - y2_min);
 
         inter_area / (bbox1_area + bbox2_area - inter_area)
-    }
-
-    fn hsv_to_rgb(h: f32, s: f32, v: f32) -> (u8, u8, u8) {
-        let i = (h * 6.0).floor() as i32;
-        let f = h * 6.0 - i as f32;
-        let p = v * (1.0 - s);
-        let q = v * (1.0 - f * s);
-        let t = v * (1.0 - (1.0 - f) * s);
-
-        let (r, g, b) = match i % 6 {
-            0 => (v, t, p),
-            1 => (q, v, p),
-            2 => (p, v, t),
-            3 => (p, q, v),
-            4 => (t, p, v),
-            5 => (v, p, q),
-            _ => (1.0, 1.0, 1.0),
-        };
-
-        ((r * 255.0) as u8, (g * 255.0) as u8, (b * 255.0) as u8)
-    }
-
-    fn get_color_for_class(class_id: usize) -> SolidSource {
-        let num_classes = 84;
-        let hue = (class_id as f32 / num_classes as f32) % 1.0;
-        let (r, g, b) = Self::hsv_to_rgb(hue, 0.7, 0.9);
-
-        SolidSource { r, g, b, a: 0xFF }
     }
 }
 

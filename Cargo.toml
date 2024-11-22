@@ -10,18 +10,11 @@ ort = { version = "2.0.0-rc.8", features = ["cuda", "tensorrt", "openvino"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 anyhow = "1.0"
-raqote = "0.8.5"
-show-image = { version = "0.14.0", features = ["image", "raqote"] }
-rusttype = "0.9"
 nalgebra = "0.33.2"
 chrono = "0.4.38"
 serde = { version = "1.0.215", features = ["derive"] }
 toml = "0.8.19"
 rayon = "1.10.0"
-font-kit = "0.14.2"
-lazy_static = "1.5.0"
-gtk = "0.18.1"
-opencv = "0.93.4"
 
 [dev-dependencies]
 tempfile = "3.3"
