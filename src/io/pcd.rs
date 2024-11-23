@@ -1,9 +1,10 @@
 use std::{
     fs::File,
-    io::{BufRead, BufReader, Read},
+    io::{BufRead, BufReader, BufWriter, Read, Write},
 };
 
 use anyhow::{anyhow, Context, Result};
+use nalgebra::Point3;
 use tracing::{debug, error, info, span, trace, warn, Level};
 
 pub struct PcdReader;
@@ -361,6 +362,40 @@ impl PcdReader {
         );
         Ok(points)
     }
+}
+
+pub fn write_points_to_pcd<P, I>(points: I, path: P) -> Result<()>
+where
+    P: AsRef<std::path::Path>,
+    I: IntoIterator<Item = Point3<f32>>,
+{
+    let file_path = path.as_ref();
+    let file = File::create(file_path).context("Failed to create file")?;
+    let mut writer = BufWriter::new(file);
+
+    writeln!(writer, "VERSION .7")?;
+    writeln!(writer, "FIELDS x y z")?;
+    writeln!(writer, "SIZE 4 4 4")?;
+    writeln!(writer, "TYPE F F F")?;
+    writeln!(writer, "COUNT 1 1 1")?;
+
+    let points: Vec<Point3<f32>> = points.into_iter().collect();
+    writeln!(writer, "WIDTH {}", points.len())?;
+    writeln!(writer, "HEIGHT 1")?;
+    writeln!(writer, "VIEWPOINT 0 0 0 1 0 0 0")?;
+    writeln!(writer, "POINTS {}", points.len())?;
+    writeln!(writer, "DATA ascii")?;
+
+    let mut buffer = String::with_capacity(points.len() * 32);
+    for point in points {
+        use std::fmt::Write as FmtWrite;
+        writeln!(&mut buffer, "{} {} {}", point.x, point.y, point.z)
+            .expect("Failed to write to string buffer");
+    }
+
+    writer.write_all(buffer.as_bytes())?;
+
+    Ok(())
 }
 
 #[cfg(test)]
