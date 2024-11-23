@@ -92,7 +92,7 @@ impl VideoReader {
             e
         })?;
 
-        trace!("VideoReader successfully initialized.");
+        info!("VideoReader successfully initialized.");
         Ok(Self {
             context,
             decoder,

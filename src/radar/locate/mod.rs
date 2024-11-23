@@ -410,9 +410,9 @@ impl Locator {
                                 sum_point.y / count as f32,
                                 sum_point.z / count as f32,
                             ),
-                            width: min_max.1.x - min_max.0.x,
-                            height: min_max.1.y - min_max.0.y,
-                            depth: min_max.1.z - min_max.0.z,
+                            width: min_max.1.y - min_max.0.y,
+                            height: min_max.1.z - min_max.0.z,
+                            depth: min_max.1.x - min_max.0.x,
                         };
 
                         Some(robot_location)

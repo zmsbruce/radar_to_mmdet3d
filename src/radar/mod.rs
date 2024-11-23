@@ -2,11 +2,13 @@ mod config;
 mod detect;
 mod locate;
 
+use std::fmt::Display;
+
 use anyhow::{Context, Result};
 use config::{default::*, RadarInstanceConfig};
 use image::DynamicImage;
 use nalgebra::{Matrix3, Matrix4, Point3};
-use tracing::{debug, info, span, trace, Level};
+use tracing::{info, span, trace, Level};
 
 use detect::{Execution, RobotDetection, RobotDetector};
 use locate::{Locator, RobotLocation};
@@ -15,6 +17,28 @@ use locate::{Locator, RobotLocation};
 pub struct RobotInfo {
     detection: RobotDetection,
     location: RobotLocation,
+}
+
+impl Display for RobotInfo {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let bbox = self.detection.bbox();
+        write!(
+            f,
+            "{}: bbox=(({}, {}), ({}, {})), aabb=(({}, {}, {}), ({}, {}, {})), confidence={}",
+            self.detection.label,
+            bbox.x_center - bbox.width / 2.0,
+            bbox.y_center - bbox.height / 2.0,
+            bbox.x_center + bbox.width / 2.0,
+            bbox.y_center + bbox.height / 2.0,
+            self.location.center.x - self.location.depth / 2.0,
+            self.location.center.y - self.location.width / 2.0,
+            self.location.center.z - self.location.height / 2.0,
+            self.location.center.x + self.location.depth / 2.0,
+            self.location.center.y + self.location.width / 2.0,
+            self.location.center.z + self.location.height / 2.0,
+            self.detection.confidence,
+        )
+    }
 }
 
 pub struct RadarInstance {
@@ -72,7 +96,7 @@ impl<'a> Radar<'a> {
             )
             .context("Failed to locate detections")?;
 
-        let robots = detect_result
+        let robots: Vec<_> = detect_result
             .into_iter()
             .zip(locate_result.into_iter())
             .filter_map(|(detection, location)| {
@@ -87,7 +111,9 @@ impl<'a> Radar<'a> {
             })
             .collect();
 
-        debug!("Rdlt result: {:#?}", robots);
+        robots.iter().for_each(|robot| {
+            info!("{robot}");
+        });
         Ok(robots)
     }
 }

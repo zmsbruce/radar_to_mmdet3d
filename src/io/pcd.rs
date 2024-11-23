@@ -29,7 +29,11 @@ impl PcdReader {
         })?;
         let mut reader = BufReader::new(file);
 
-        Self::read_from_reader(&mut reader)
+        let points =
+            Self::read_from_reader(&mut reader).context("Failed to read points from BufReader")?;
+
+        info!("Successfully read points with length: {}", points.len());
+        Ok(points)
     }
 
     fn read_from_reader<R: BufRead>(reader: &mut R) -> Result<Vec<Vec<f64>>> {
