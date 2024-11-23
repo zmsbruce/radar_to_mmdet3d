@@ -1,5 +1,11 @@
 use anyhow::{anyhow, Context, Result};
-use ffmpeg_next::{self as ffmpeg, decoder, format::context, frame, software::scaling};
+use ffmpeg_next::{
+    self as ffmpeg, decoder,
+    format::{context, Pixel},
+    frame,
+    software::scaling,
+};
+use image::RgbImage;
 use std::sync::Once;
 use tracing::{debug, error, info, span, trace, warn, Level};
 
@@ -145,7 +151,7 @@ impl VideoReader {
         Ok(rgb_frame)
     }
 
-    pub fn next_n_frame(&mut self, n: usize) -> Result<Option<frame::Video>> {
+    pub fn next_nth_frame(&mut self, n: usize) -> Result<Option<frame::Video>> {
         let span = span!(Level::TRACE, "VideoReader::next_n_frame");
         let _enter = span.enter();
 
@@ -175,13 +181,13 @@ impl VideoReader {
                             let rgb_frame = self
                                 .convert_frame_to_rgb(&frame)
                                 .context("Failed to convert frame to rgb")?;
-                            info!("Successfully fetched the {}th frame.", n);
+                            debug!("Successfully fetched the {}th frame.", n);
                             return Ok(Some(rgb_frame));
                         }
                     }
                 }
             } else {
-                info!("No more packets available. Sending EOF to decoder.");
+                debug!("No more packets available. Sending EOF to decoder.");
                 self.decoder
                     .send_eof()
                     .context("Failed to send eof from decoder")
@@ -214,7 +220,27 @@ impl VideoReader {
 
     #[inline]
     pub fn next_frame(&mut self) -> Result<Option<frame::Video>> {
-        self.next_n_frame(1)
+        self.next_nth_frame(1)
+    }
+
+    pub fn convert_frame_to_image(frame: &frame::Video) -> Result<RgbImage> {
+        if frame.format() != Pixel::RGB24 {
+            return Err(anyhow!(
+                "Frame is not in RGB24 format. You may need to convert it first."
+            ));
+        }
+
+        let width = frame.width() as u32;
+        let height = frame.height() as u32;
+        let data = frame.data(0);
+        if data.is_empty() {
+            return Err(anyhow!("Frame data is empty."));
+        }
+
+        let image = RgbImage::from_raw(width, height, data.to_vec())
+            .ok_or_else(|| anyhow!("Failed to create RgbImage from frame data."))?;
+
+        Ok(image)
     }
 
     fn initialize_ffmpeg() {
@@ -342,7 +368,7 @@ mod tests {
         let mut video_reader =
             VideoReader::from_file(temp_file.path()).expect("Failed to initialize VideoReader");
 
-        let frame = video_reader.next_n_frame(5);
+        let frame = video_reader.next_nth_frame(5);
         assert!(
             frame.is_ok(),
             "Failed to read the 5th frame: {:?}",
@@ -370,7 +396,7 @@ mod tests {
         let total_frames = video_reader
             .total_frames()
             .expect("Failed to get total frames");
-        let result = video_reader.next_n_frame((total_frames + 10) as usize); // 超过总帧数
+        let result = video_reader.next_nth_frame((total_frames + 10) as usize); // 超过总帧数
         assert!(
             result.is_ok(),
             "Expected Ok(None) when exceeding total frames"
