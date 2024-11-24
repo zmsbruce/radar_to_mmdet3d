@@ -16,6 +16,7 @@ pub struct VideoReader {
     decoder: decoder::Video,
     stream_index: usize,
     scaler: scaling::Context,
+    pub filename: String,
 }
 
 impl VideoReader {
@@ -104,6 +105,13 @@ impl VideoReader {
             decoder,
             stream_index,
             scaler,
+            filename: file_path
+                .as_ref()
+                .file_name()
+                .unwrap()
+                .to_str()
+                .unwrap()
+                .to_string(),
         })
     }
 

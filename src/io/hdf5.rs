@@ -6,6 +6,7 @@ use tracing::error;
 
 pub struct Hdf5PointCloudReader {
     dataset: Dataset,
+    pub filename: String,
 }
 
 impl Hdf5PointCloudReader {
@@ -34,7 +35,16 @@ impl Hdf5PointCloudReader {
             })
             .ok_or_else(|| anyhow!("Pointcloud sequence data must have shape [F, N, 3]"))?;
 
-        Ok(Self { dataset })
+        Ok(Self {
+            dataset,
+            filename: file_path
+                .as_ref()
+                .file_name()
+                .unwrap()
+                .to_str()
+                .unwrap()
+                .to_string(),
+        })
     }
 
     #[inline]
