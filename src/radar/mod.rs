@@ -1,13 +1,11 @@
-mod config;
 mod detect;
 mod locate;
 
 use anyhow::{anyhow, Context, Result};
-use config::RadarConfig;
-
 use nalgebra::{Matrix3, Matrix4};
 use tracing::{error, span, trace, Level};
 
+use crate::config::RadarConfig;
 use detect::{Execution, RobotDetector};
 use locate::Locator;
 
