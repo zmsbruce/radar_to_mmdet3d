@@ -136,19 +136,21 @@ impl RobotDetection {
     }
 }
 
-pub struct RobotDetector<'a> {
-    car_detector: Yolo<'a>,
-    armor_detector: Yolo<'a>,
+pub struct RobotDetector {
+    car_detector: Yolo,
+    armor_detector: Yolo,
+    execution: Execution,
 }
 
-impl<'a> RobotDetector<'a> {
+impl RobotDetector {
     pub fn new(
-        car_onnx: &'a [u8],
-        armor_onnx: &'a [u8],
+        car_onnx: &str,
+        armor_onnx: &str,
         car_conf_thresh: f32,
         armor_conf_thresh: f32,
         car_nms_thresh: f32,
         armor_nms_thresh: f32,
+        execution: Execution,
     ) -> Self {
         let span = span!(Level::TRACE, "RobotDetector::new");
         let _enter = span.enter();
@@ -164,6 +166,7 @@ impl<'a> RobotDetector<'a> {
         Self {
             car_detector,
             armor_detector,
+            execution,
         }
     }
 
@@ -172,13 +175,13 @@ impl<'a> RobotDetector<'a> {
         self.car_detector.is_model_built() && self.armor_detector.is_model_built()
     }
 
-    pub fn build_models(&mut self, execution: Execution) -> Result<()> {
+    pub fn build_models(&mut self) -> Result<()> {
         self.car_detector
-            .build(execution)
+            .build(self.execution)
             .context("Failed to build car detector")?;
 
         self.armor_detector
-            .build(execution)
+            .build(self.execution)
             .context("Failed to build armor detector")?;
 
         Ok(())
@@ -295,15 +298,16 @@ mod tests {
     #[test]
     fn test_robot_detector() -> Result<()> {
         let mut robot_detector = RobotDetector::new(
-            include_bytes!("../../../assets/test/car.onnx"),
-            include_bytes!("../../../assets/test/armor.onnx"),
+            "assets/test/car.onnx",
+            "assets/test/armor.onnx",
             0.30,
             0.45,
             0.50,
             0.75,
+            Execution::CPU,
         );
 
-        robot_detector.build_models(Execution::CPU)?;
+        robot_detector.build_models()?;
 
         let image = image::open(PathBuf::from("assets/test/battlefield.png"))
             .context("Failed to read image")?;

@@ -48,21 +48,21 @@ impl TryFrom<&str> for Execution {
     }
 }
 
-pub struct Yolo<'a> {
+pub struct Yolo {
     conf_threshold: f32,
     nms_threshold: f32,
     input_size: (u32, u32),
-    onnx: &'a [u8],
+    onnx_path: String,
     model: Option<Session>,
 }
 
-impl Debug for Yolo<'_> {
+impl Debug for Yolo {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Yolo")
             .field("conf_threshold", &self.conf_threshold)
             .field("nms_threshold", &self.nms_threshold)
             .field("input_size", &self.input_size)
-            .field("onnx", &self.onnx.as_ptr())
+            .field("onnx_path", &self.onnx_path)
             .field(
                 "model",
                 &if self.model.is_some() {
@@ -75,9 +75,9 @@ impl Debug for Yolo<'_> {
     }
 }
 
-impl<'a> Yolo<'a> {
-    pub fn new<'b: 'a>(
-        onnx: &'a [u8],
+impl Yolo {
+    pub fn new(
+        onnx_path: &str,
         conf_threshold: f32,
         nms_threshold: f32,
         input_size: (u32, u32),
@@ -85,14 +85,14 @@ impl<'a> Yolo<'a> {
         let span = span!(Level::TRACE, "Yolo::new");
         let _enter = span.enter();
 
-        debug!("Initializing YOLO with config: conf_threshold={}, nms_threshold={}, input_size={:?}, onnx={:p}", 
-              conf_threshold, nms_threshold, input_size, onnx.as_ptr());
+        debug!("Initializing YOLO with config: conf_threshold={}, nms_threshold={}, input_size={:?}, onnx_path={}", 
+              conf_threshold, nms_threshold, input_size, onnx_path);
 
         Self {
             conf_threshold,
             nms_threshold,
             input_size,
-            onnx,
+            onnx_path: onnx_path.to_string(),
             model: None,
         }
     }
@@ -112,9 +112,8 @@ impl<'a> Yolo<'a> {
         let _enter = span.enter();
 
         info!(
-            "Building the ONNX model from onnx: {:p} and execution: {:?}",
-            self.onnx.as_ptr(),
-            execution
+            "Building the ONNX model from onnx: {} and execution: {:?}",
+            self.onnx_path, execution
         );
         let providers = match execution {
             Execution::TensorRT => vec![TensorRTExecutionProvider::default().build()],
@@ -133,7 +132,7 @@ impl<'a> Yolo<'a> {
             .with_execution_providers(providers)
             .context("Failed to register execution providers")?
             .with_optimization_level(GraphOptimizationLevel::Level3)?
-            .commit_from_memory(&self.onnx)
+            .commit_from_file(&self.onnx_path)
             .context("Failed to commit session from memory")?;
 
         self.model = Some(session);
@@ -345,7 +344,7 @@ mod tests {
             }
         });
 
-        let yolo = Yolo::new(&[], 0.0, 0.0, (2, 2));
+        let yolo = Yolo::new("", 0.0, 0.0, (2, 2));
         let dynamic_image = DynamicImage::ImageRgb8(img_buffer);
         let (processed_array, original_dims) = yolo.preprocess_image(&dynamic_image)?;
 
@@ -503,7 +502,7 @@ mod tests {
         let detections = vec![detection1, detection2, detection3];
 
         let nms_threshold = 0.3;
-        let yolo = Yolo::new(&[], 0.0, nms_threshold, (0, 0));
+        let yolo = Yolo::new("", 0.0, nms_threshold, (0, 0));
         let final_detections = yolo.non_max_suppression(detections);
 
         assert_eq!(
@@ -545,7 +544,7 @@ mod tests {
 
         let conf_threshold = 0.5;
         let nms_threshold = 0.4;
-        let yolo = Yolo::new(&[], conf_threshold, nms_threshold, (1, 1));
+        let yolo = Yolo::new("", conf_threshold, nms_threshold, (1, 1));
 
         let detections = yolo.process_yolov8_output(mock_output, (1, 1));
 
@@ -560,12 +559,7 @@ mod tests {
 
     #[test]
     fn test_yolo() -> Result<()> {
-        let mut yolo = Yolo::new(
-            include_bytes!("../../../assets/test/yolov8n.onnx"),
-            0.5,
-            0.75,
-            (640, 640),
-        );
+        let mut yolo = Yolo::new("assets/test/yolov8n.onnx", 0.5, 0.75, (640, 640));
         yolo.build(Execution::CPU)?;
 
         let img = image::open(PathBuf::from_str("assets/test/zidane.jpg")?)?;
