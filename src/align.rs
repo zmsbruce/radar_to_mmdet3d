@@ -2,6 +2,7 @@ use std::fs;
 use std::path::Path;
 
 use anyhow::{anyhow, Context, Result};
+use indicatif::{ProgressBar, ProgressStyle};
 use tracing::{debug, error, info, trace, warn};
 
 use crate::io::{hdf5::Hdf5PointCloudReader, pcd::write_points_to_pcd, video::VideoReader};
@@ -65,10 +66,10 @@ impl Aligner {
             .get_align_frame_count()
             .context("Failed to get align frame count")?;
 
-        info!("Align frame num: {align_frame_count}");
+        debug!("Align frame num: {align_frame_count}");
 
         for (video_idx, video_reader) in self.video_readers.iter_mut().enumerate() {
-            trace!("Aligning video {video_idx}...");
+            info!("Fetching images from video {}...", video_reader.filename);
 
             let dir_path = Path::new(output_path).join(format!("images/images_{}", video_idx));
             fs::create_dir_all(dir_path.clone())
@@ -81,6 +82,16 @@ impl Aligner {
             let video_frame_count = video_reader.total_frames()?;
             let align_freq = video_frame_count as f64 / align_frame_count as f64;
             debug!("Video frame count: {video_frame_count}, align interval: {align_freq}");
+
+            let pb = ProgressBar::new(align_frame_count as u64);
+            pb.set_style(
+                ProgressStyle::default_bar()
+                    .template(
+                        "{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} ({eta})",
+                    )
+                    .unwrap()
+                    .progress_chars("#>-"),
+            );
 
             let mut last_frame_idx = 0usize;
             for align_idx in 1..=align_frame_count {
@@ -125,16 +136,22 @@ impl Aligner {
                 }
 
                 last_frame_idx = frame_idx;
-                info!(
+                trace!(
                     "Successfully fetched image {} for video {}.",
-                    align_idx, video_idx
+                    align_idx,
+                    video_idx
                 );
+
+                pb.set_position((align_idx - 1) as u64);
             }
 
-            info!("Successfully aligned and written video {}", video_idx);
+            trace!("Successfully aligned and written video {}", video_idx);
         }
 
-        trace!("Aligning point clouds...");
+        info!(
+            "Fetching point clouds from Hdf5 file {}...",
+            self.point_cloud_reader.filename
+        );
 
         let cloud_dir_path = Path::new(output_path).join("points");
         fs::create_dir_all(cloud_dir_path.clone())
@@ -145,6 +162,16 @@ impl Aligner {
             })?;
 
         let align_freq = self.point_cloud_reader.get_frame_num() as f64 / align_frame_count as f64;
+
+        let pb = ProgressBar::new(align_frame_count as u64);
+        pb.set_style(
+            ProgressStyle::default_bar()
+                .template(
+                    "{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} ({eta})",
+                )
+                .unwrap()
+                .progress_chars("#>-"),
+        );
 
         for align_idx in 0..align_frame_count {
             let cloud_idx = (align_freq * align_idx as f64).round() as usize;
@@ -162,7 +189,9 @@ impl Aligner {
                     error!("Failed to save cloud {}: {}", align_idx, e);
                     e
                 })?;
-            info!("Successfully fetched cloud {}.", align_idx);
+            trace!("Successfully fetched cloud {}.", align_idx);
+
+            pb.set_position(align_idx as u64);
         }
         info!("Successfully aligned and written cloud");
 
