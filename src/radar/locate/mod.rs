@@ -1,7 +1,7 @@
 use std::collections::{HashMap, VecDeque};
 
 use anyhow::{anyhow, Result};
-use image::{DynamicImage, GenericImageView, ImageBuffer, Luma};
+use image::{ImageBuffer, Luma};
 use nalgebra::{Matrix3, Matrix4, Point3, Vector3, Vector4};
 use rayon::prelude::*;
 use tracing::{debug, error, span, trace, Level};
@@ -95,7 +95,6 @@ impl Locator {
         &mut self,
         points: &[Point3<f32>],
         detections: &[RobotDetection],
-        input_image: &DynamicImage,
     ) -> Result<Vec<Option<RobotLocation>>> {
         let span = span!(Level::TRACE, "Locator::locate_detections");
         let _enter = span.enter();
@@ -106,14 +105,8 @@ impl Locator {
             detections.len()
         );
 
-        let (image_width, image_height) = input_image.dimensions();
         if self.background_depth_map.is_empty() {
-            debug!("Background depth map is empty, initializing.");
-            self.background_depth_map = ImageBuffer::new(image_width, image_height);
-        } else if self.background_depth_map.dimensions() != (image_width, image_height) {
-            return Err(anyhow!(
-                "Dimensions of image is not equal to background depth image"
-            ));
+            return Err(anyhow!("Background depth map is empty"));
         }
 
         trace!("Getting robot depth map");
@@ -129,6 +122,64 @@ impl Locator {
 
         debug!("Robot locations found: {:?}", robot_locations);
         Ok(robot_locations)
+    }
+
+    pub fn update_background_depth_map(
+        &mut self,
+        points: &[Point3<f32>],
+        depth_map_size: (u32, u32),
+    ) -> Result<()> {
+        let (image_width, image_height) = depth_map_size;
+        if self.background_depth_map.is_empty() {
+            debug!("Background depth map is empty, initializing.");
+            self.background_depth_map = ImageBuffer::new(image_width, image_height);
+        } else if self.background_depth_map.dimensions() != (image_width, image_height) {
+            return Err(anyhow!(
+                "Dimensions of image is not equal to background depth image"
+            ));
+        }
+
+        let (image_width, image_height) = self.background_depth_map.dimensions();
+        debug!("Image width and height: {image_width}x{image_height}");
+
+        let image_points_filtered: Vec<_> = points
+            .iter()
+            .filter_map(|lidar_point| {
+                if !lidar_point.is_empty()
+                    && lidar_point.x.is_normal()
+                    && lidar_point.y.is_normal()
+                    && lidar_point.z.is_normal()
+                    && lidar_point.x < self.max_valid_distance
+                    && lidar_point.x > self.min_valid_distance
+                {
+                    let image_point = self.lidar_to_image(lidar_point);
+                    debug!(
+                        "Lidar point: {:?}, image point: {:?}",
+                        lidar_point, image_point
+                    );
+                    let (u, v) = (image_point.x.round() as i32, image_point.y.round() as i32);
+                    if u >= 0 && (u as u32) < image_width && v >= 0 && (v as u32) < image_height {
+                        trace!("Point is in image dimension and kept.");
+                        Some((u as u32, v as u32, image_point.z))
+                    } else {
+                        trace!("Point is out of image dimension and filtered.");
+                        None
+                    }
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        image_points_filtered.into_iter().for_each(|point| {
+            let (u, v, depth) = point;
+            let background_depth = self.background_depth_map.get_pixel_mut(u, v);
+            if depth > background_depth.0[0] {
+                background_depth.0[0] = depth;
+            }
+        });
+
+        Ok(())
     }
 
     fn image_to_lidar(&self, point: &Point3<f32>) -> Point3<f32> {
@@ -208,10 +259,6 @@ impl Locator {
         image_points_filtered.into_iter().for_each(|point| {
             let (u, v, depth) = point;
             depth_map.put_pixel(u, v, Luma([depth]));
-            let background_depth = self.background_depth_map.get_pixel_mut(u, v);
-            if depth > background_depth.0[0] {
-                background_depth.0[0] = depth;
-            }
         });
         self.depth_map_queue.push_back(depth_map);
         if self.depth_map_queue.len() > self.max_depth_map_queue_size {

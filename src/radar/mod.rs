@@ -2,44 +2,14 @@ mod config;
 mod detect;
 mod locate;
 
-use std::fmt::Display;
-
 use anyhow::{anyhow, Context, Result};
 use config::RadarConfig;
-use image::DynamicImage;
-use nalgebra::{Matrix3, Matrix4, Point3};
-use tracing::{error, info, span, trace, Level};
 
-use detect::{Execution, RobotDetection, RobotDetector};
-use locate::{Locator, RobotLocation};
+use nalgebra::{Matrix3, Matrix4};
+use tracing::{error, span, trace, Level};
 
-#[derive(Debug)]
-pub struct RobotInfo {
-    detection: RobotDetection,
-    location: RobotLocation,
-}
-
-impl Display for RobotInfo {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let bbox = self.detection.bbox();
-        write!(
-            f,
-            "{}: bbox=(({}, {}), ({}, {})), aabb=(({}, {}, {}), ({}, {}, {})), confidence={}",
-            self.detection.label,
-            bbox.x_center - bbox.width / 2.0,
-            bbox.y_center - bbox.height / 2.0,
-            bbox.x_center + bbox.width / 2.0,
-            bbox.y_center + bbox.height / 2.0,
-            self.location.center.x - self.location.depth / 2.0,
-            self.location.center.y - self.location.width / 2.0,
-            self.location.center.z - self.location.height / 2.0,
-            self.location.center.x + self.location.depth / 2.0,
-            self.location.center.y + self.location.width / 2.0,
-            self.location.center.z + self.location.height / 2.0,
-            self.detection.confidence,
-        )
-    }
-}
+use detect::{Execution, RobotDetector};
+use locate::Locator;
 
 pub struct Radar {
     robot_detector: RobotDetector,
@@ -147,48 +117,5 @@ impl Radar {
             );
             return Err(anyhow!("Instance name not found"));
         }
-    }
-
-    pub fn detect_and_locate(
-        &mut self,
-        image: &DynamicImage,
-        point_cloud: &Vec<Point3<f32>>,
-    ) -> Result<Vec<RobotInfo>> {
-        let span = span!(Level::TRACE, "Radar::detect_and_locate");
-        let _enter = span.enter();
-
-        if !self.robot_detector.is_models_built() {
-            info!("Building car and armor models...");
-            self.robot_detector
-                .build_models()
-                .context("Failed to build models")?;
-        }
-
-        trace!("Running detection and location...");
-        let detect_result = self.robot_detector.detect(&image)?;
-        let locate_result = self
-            .locator
-            .locate_detections(&point_cloud, &detect_result, &image)
-            .context("Failed to locate detections")?;
-
-        let robots: Vec<_> = detect_result
-            .into_iter()
-            .zip(locate_result.into_iter())
-            .filter_map(|(detection, location)| {
-                if let Some(location) = location {
-                    Some(RobotInfo {
-                        detection,
-                        location,
-                    })
-                } else {
-                    None
-                }
-            })
-            .collect();
-
-        robots.iter().for_each(|robot| {
-            info!("{robot}");
-        });
-        Ok(robots)
     }
 }
