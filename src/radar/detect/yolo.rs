@@ -7,7 +7,7 @@ use ort::{
     inputs, CUDAExecutionProvider, GraphOptimizationLevel, OpenVINOExecutionProvider, Session,
     TensorRTExecutionProvider,
 };
-use tracing::{debug, error, info, span, trace, warn, Level};
+use tracing::{debug, error, span, trace, warn, Level};
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct BBox {
@@ -111,7 +111,7 @@ impl Yolo {
         let span = span!(Level::TRACE, "Yolo::build");
         let _enter = span.enter();
 
-        info!(
+        debug!(
             "Building the ONNX model from onnx: {} and execution: {:?}",
             self.onnx_path, execution
         );
