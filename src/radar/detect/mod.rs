@@ -8,10 +8,12 @@ use std::{
 
 use anyhow::{anyhow, Context, Result};
 use image::DynamicImage;
-use tracing::{debug, info, span, trace, Level};
+use tracing::{debug, error, span, trace, Level};
 
 pub use yolo::{BBox, Execution};
 use yolo::{Detection, Yolo};
+
+use crate::config::DetectorConfig;
 
 #[derive(Debug, PartialEq, Eq, Hash, Clone, Copy)]
 pub enum RobotLabel {
@@ -155,19 +157,34 @@ impl RobotDetector {
         let span = span!(Level::TRACE, "RobotDetector::new");
         let _enter = span.enter();
 
-        info!("Initializing car detector...");
+        trace!("Initializing car detector...");
         let car_detector = Yolo::new(car_onnx, car_conf_thresh, car_nms_thresh, (640, 640));
 
-        info!("Initializing armor detector...");
+        trace!("Initializing armor detector...");
         let armor_detector = Yolo::new(armor_onnx, armor_conf_thresh, armor_nms_thresh, (640, 640));
 
-        info!("Robot detector initialized.");
+        debug!("Robot detector initialized.");
 
         Self {
             car_detector,
             armor_detector,
             execution,
         }
+    }
+
+    pub fn from_config(config: &DetectorConfig) -> Result<Self> {
+        Ok(RobotDetector::new(
+            &config.car_onnx_path,
+            &config.armor_onnx_path,
+            config.car_conf_thresh,
+            config.armor_conf_thresh,
+            config.car_nms_thresh,
+            config.armor_nms_thresh,
+            Execution::try_from(config.execution.as_str()).map_err(|e| {
+                error!("Invalid execution {}", config.execution);
+                e
+            })?,
+        ))
     }
 
     #[inline]
