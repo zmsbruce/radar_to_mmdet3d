@@ -19,6 +19,7 @@ rayon = "1.10.0"
 ffmpeg-next = "7.1.0"
 hdf5 = "0.8.1"
 indicatif = "0.17.9"
+tokio = { version = "1.41.1", features = ["full"] }
 
 [dev-dependencies]
 tempfile = "3.3"
