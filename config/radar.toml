@@ -19,7 +19,7 @@ cluster_min_points = 10
 min_valid_distance = 200
 max_valid_distance = 29300
 
-depth_map_queue_size = 4
+max_depth_map_queue_size = 4
 
 [[instances]]
 name = "Left"
