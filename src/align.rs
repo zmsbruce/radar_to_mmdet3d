@@ -1,53 +1,78 @@
-use std::fs;
-use std::path::Path;
+use anyhow::{anyhow, Result};
+use image::RgbImage;
+use nalgebra::Point3;
+use tracing::{debug, error, span, trace, warn, Level};
 
-use anyhow::{anyhow, Context, Result};
-use indicatif::{ProgressBar, ProgressStyle};
-use tracing::{debug, error, info, trace, warn};
+use crate::{
+    config::SourceConfig,
+    io::{hdf5::Hdf5PointCloudReader, video::VideoReader},
+};
 
-use crate::io::{hdf5::Hdf5PointCloudReader, pcd::write_points_to_pcd, video::VideoReader};
-
-pub struct Aligner {
+pub struct FrameAligner {
     video_readers: Vec<VideoReader>,
+    video_marks: Vec<String>,
     point_cloud_reader: Hdf5PointCloudReader,
 }
 
-impl Aligner {
-    pub fn new(video_file_paths: &[&str], pointcloud_file_path: &str) -> Result<Self> {
+impl FrameAligner {
+    pub fn new(video_file_paths: &[&str], video_marks: &[&str], pointcloud_file_path: &str) -> Result<Self> {
         let video_readers: Result<Vec<_>> = video_file_paths
             .iter()
             .map(|video_file_path| VideoReader::from_file(*video_file_path))
             .collect();
 
-        let point_cloud_reader = Hdf5PointCloudReader::from_file(pointcloud_file_path)
-            .context("Failed to construct point cloud reader")
-            .map_err(|e| {
+        let point_cloud_reader =
+            Hdf5PointCloudReader::from_file(pointcloud_file_path).map_err(|e| {
                 error!("Failed to construct point cloud reader: {e}");
                 e
             })?;
 
         Ok(Self {
-            video_readers: video_readers
-                .context("Failed to construct video readers")
-                .map_err(|e| {
-                    error!("Failed to construct video readers: {e}");
-                    e
-                })?,
+            video_readers: video_readers.map_err(|e| {
+                error!("Failed to construct video readers: {e}");
+                e
+            })?,
+            video_marks: video_marks.iter().map(|val| val.to_string()).collect(),
             point_cloud_reader,
         })
     }
 
-    fn get_align_frame_count(&self) -> Result<usize> {
+    pub fn from_config_file<P>(file_path: P) -> Result<Self>
+    where
+        P: AsRef<std::path::Path> + std::fmt::Debug,
+    {
+        let config = SourceConfig::from_file(file_path).map_err(|e| {
+            error!("Failed to read aligner config file: {}", e);
+            e
+        })?;
+
+        Self::new(
+            &config
+                .video
+                .iter()
+                .map(|config| config.file_path.as_str())
+                .collect::<Vec<&str>>(),
+                &config
+                .video
+                .iter()
+                .map(|config| config.name.as_str())
+                .collect::<Vec<&str>>(),
+            &config.point_cloud_file_path,
+        )
+    }
+
+    pub fn align_frame_count(&self) -> Result<usize> {
         let min_video_frames = self
             .video_readers
             .iter()
             .enumerate()
             .map(|(idx, reader)| {
-                let frames = reader
-                    .total_frames()
-                    .context("Failed to get total frames of video")?;
+                let frames = reader.total_frames().map_err(|e| {
+                    error!("Failed to get total frames of video {}", reader.filename);
+                    e
+                })?;
 
-                info!("Total frames of video {}: {}", idx, frames);
+                debug!("Total frames of video {}: {}", idx, frames);
                 Ok(frames)
             })
             .collect::<Result<Vec<_>>>()?
@@ -56,145 +81,158 @@ impl Aligner {
             .ok_or_else(|| anyhow!("Total frames iterator is empty"))?;
 
         let point_cloud_frames = self.point_cloud_reader.get_frame_num();
-        info!("Total frames of cloud: {}", point_cloud_frames);
+        debug!("Total frames of cloud: {}", point_cloud_frames);
 
         Ok((min_video_frames as usize).min(point_cloud_frames))
     }
 
-    pub fn align_and_write(&mut self, output_path: &str) -> Result<()> {
-        let align_frame_count = self
-            .get_align_frame_count()
-            .context("Failed to get align frame count")?;
+    #[inline]
+    pub fn video_num(&self) -> usize {
+        self.video_readers.len()
+    }
 
-        debug!("Align frame num: {align_frame_count}");
+    #[inline]
+    pub fn video_marks(&self) -> Vec<String> {
+        self.video_marks.clone()
+    }
 
-        for (video_idx, video_reader) in self.video_readers.iter_mut().enumerate() {
-            info!("Fetching images from video {}...", video_reader.filename);
+    pub fn align(
+        &mut self,
+    ) -> Result<impl Iterator<Item = Result<(Vec<Option<RgbImage>>, Option<Vec<Point3<f32>>>)>> + '_>
+    {
+        let span = span!(Level::TRACE, "FrameAligner::align");
+        let _enter = span.enter();
 
-            let dir_path = Path::new(output_path).join(format!("images/images_{}", video_idx));
-            fs::create_dir_all(dir_path.clone())
-                .context("Failed to create directory")
-                .map_err(|e| {
-                    error!("Failed to create directory {:?}: {e}", dir_path);
+        let align_frame_count = self.align_frame_count().map_err(|e| {
+            error!("Failed to get align frame count: {e}");
+            e
+        })?;
+
+        debug!("Align frame count calculated: {align_frame_count}");
+
+        let video_align_freqs = self
+            .video_readers
+            .iter()
+            .map(|reader| {
+                let video_frame_count = reader.total_frames().map_err(|e| {
+                    error!(
+                        "Failed to get total frames from video {}: {e}",
+                        reader.filename
+                    );
                     e
                 })?;
-
-            let video_frame_count = video_reader.total_frames()?;
-            let align_freq = video_frame_count as f64 / align_frame_count as f64;
-            debug!("Video frame count: {video_frame_count}, align interval: {align_freq}");
-
-            let pb = ProgressBar::new(align_frame_count as u64);
-            pb.set_style(
-                ProgressStyle::default_bar()
-                    .template(
-                        "{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} ({eta})",
-                    )
-                    .unwrap()
-                    .progress_chars("#>-"),
-            );
-
-            let mut last_frame_idx = 0usize;
-            for align_idx in 1..=align_frame_count {
-                let frame_idx = (align_freq * align_idx as f64).round() as usize;
                 debug!(
-                    "Frame index: {}, last frame index: {}",
-                    frame_idx, last_frame_idx
+                    "Video '{}' total frames: {}, align frequency: {}",
+                    reader.filename,
+                    video_frame_count,
+                    video_frame_count as f64 / align_frame_count as f64
                 );
+                Ok(video_frame_count as f64 / align_frame_count as f64)
+            })
+            .collect::<Result<Vec<_>>>()?;
 
-                if let Some(frame) = video_reader
-                    .next_nth_frame(frame_idx - last_frame_idx)
-                    .context("Failed to get next nth frame")
-                    .map_err(|e| {
-                        error!(
-                            "Failed to get next {}th frame for video {}: {}",
-                            frame_idx - last_frame_idx,
-                            video_idx,
-                            e
-                        );
-                        e
-                    })?
-                {
-                    let image = VideoReader::convert_frame_to_image(&frame)
-                        .context("Failed to convert video frame to image")
-                        .map_err(|e| {
-                            error!("Failed to convert video frame to image: {}", e);
-                            e
-                        })?;
+        let pointcloud_align_freq =
+            self.point_cloud_reader.get_frame_num() as f64 / align_frame_count as f64;
 
-                    image
-                        .save(dir_path.join(format!("{:06}.png", align_idx - 1)))
-                        .context("Failed to save image")
-                        .map_err(|e| {
-                            error!("Failed to save image {} for video {}", align_idx, video_idx);
-                            e
-                        })?;
+        debug!(
+            "Point cloud total frames: {}, align frequency: {}",
+            self.point_cloud_reader.get_frame_num(),
+            pointcloud_align_freq
+        );
+
+        let mut last_frame_indices: Vec<i32> = vec![-1; self.video_readers.len()];
+
+        let iter = (0..align_frame_count).map(move |align_idx| {
+            trace!("Starting alignment for frame index: {align_idx}");
+
+            let mut video_frames = Vec::with_capacity(self.video_readers.len());
+
+            for (video_idx, (video_reader, align_freq)) in self
+                .video_readers
+                .iter_mut()
+                .zip(video_align_freqs.iter())
+                .enumerate()
+            {
+                let frame_idx = (*align_freq * align_idx as f64).round() as usize;
+                let frame_skip = if frame_idx as i32 >= last_frame_indices[video_idx] {
+                    (frame_idx as i32 - last_frame_indices[video_idx]) as usize
                 } else {
-                    warn!(
-                        "Frame {} of video {} is empty, will not be saved.",
-                        frame_idx, video_idx
+                    error!(
+                        "Frame index {} is less than the last processed frame index {} for video '{}'.",
+                        frame_idx, last_frame_indices[video_idx], video_reader.filename
                     );
-                }
-
-                last_frame_idx = frame_idx;
-                trace!(
-                    "Successfully fetched image {} for video {}.",
-                    align_idx,
-                    video_idx
+                    return Err(anyhow::anyhow!(
+                        "Frame index calculation error for video '{}'",
+                        video_reader.filename
+                    ));
+                };
+    
+                debug!(
+                    "Fetching frame for video '{}', align_idx: {}, frame_idx: {}, frame_skip: {}",
+                    video_reader.filename, align_idx, frame_idx, frame_skip
                 );
 
-                pb.set_position((align_idx - 1) as u64);
+                let frame = match video_reader.next_nth_frame(frame_skip) {
+                    Ok(Some(frame)) => {
+                        debug!(
+                            "Successfully fetched frame {} from video '{}'",
+                            frame_idx, video_reader.filename
+                        );
+                        RgbImage::from_raw(frame.width(), frame.height(), frame.data(0).to_vec())
+                    }
+                    Ok(None) => {
+                        warn!("Frame {} of video {} is empty.", frame_idx, video_idx);
+                        None
+                    }
+                    Err(e) => {
+                        error!(
+                            "Failed to get frame {} for video {}: {}",
+                            frame_idx, video_idx, e
+                        );
+                        return Err(e);
+                    }
+                };
+
+                trace!(
+                    "Processed frame {} for video '{}' (align_idx: {})",
+                    frame_idx,
+                    video_reader.filename,
+                    align_idx
+                );
+
+                video_frames.push(frame);
+
+                last_frame_indices[video_idx] = frame_idx as i32;
             }
 
-            trace!("Successfully aligned and written video {}", video_idx);
-        }
+            let cloud_idx = (pointcloud_align_freq * align_idx as f64).round() as usize;
+            debug!(
+                "Fetching point cloud for align_idx: {}, cloud_idx: {}",
+                align_idx, cloud_idx
+            );
 
-        info!(
-            "Fetching point clouds from Hdf5 file {}...",
-            self.point_cloud_reader.filename
-        );
+            let cloud = match self.point_cloud_reader.read_pointcloud_frame(cloud_idx) {
+                Ok(cloud) => {
+                    debug!("Successfully fetched point cloud frame {}", cloud_idx);
+                    Some(cloud)
+                }
+                Err(e) => {
+                    error!("Failed to read pointcloud frame {}: {}", cloud_idx, e);
+                    return Err(e);
+                }
+            };
 
-        let cloud_dir_path = Path::new(output_path).join("points");
-        fs::create_dir_all(cloud_dir_path.clone())
-            .context("Failed to create directory")
-            .map_err(|e| {
-                error!("Failed to create directory {:?}: {e}", cloud_dir_path);
-                e
-            })?;
+            trace!(
+                "Finished alignment for frame index: {align_idx} (video frames: {}, point cloud: {})",
+                video_frames.len(),
+                if cloud.is_some() { "present" } else { "missing" }
+            );
 
-        let align_freq = self.point_cloud_reader.get_frame_num() as f64 / align_frame_count as f64;
+            Ok((video_frames, cloud))
+        });
 
-        let pb = ProgressBar::new(align_frame_count as u64);
-        pb.set_style(
-            ProgressStyle::default_bar()
-                .template(
-                    "{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} ({eta})",
-                )
-                .unwrap()
-                .progress_chars("#>-"),
-        );
+        debug!("Iterator for alignment frames successfully created.");
 
-        for align_idx in 0..align_frame_count {
-            let cloud_idx = (align_freq * align_idx as f64).round() as usize;
-            let cloud = self
-                .point_cloud_reader
-                .read_pointcloud_frame(cloud_idx)
-                .context("Failed to read pointcloud frame")
-                .map_err(|e| {
-                    error!("Failed to read pointcloud {}: {}", cloud_idx, e);
-                    e
-                })?;
-            write_points_to_pcd(cloud, cloud_dir_path.join(format!("{:06}.pcd", align_idx)))
-                .context("Failed to save cloud")
-                .map_err(|e| {
-                    error!("Failed to save cloud {}: {}", align_idx, e);
-                    e
-                })?;
-            trace!("Successfully fetched cloud {}.", align_idx);
-
-            pb.set_position(align_idx as u64);
-        }
-        info!("Successfully aligned and written cloud");
-
-        Ok(())
+        Ok(iter)
     }
 }
