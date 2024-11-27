@@ -6,6 +6,8 @@ use nalgebra::{Matrix3, Matrix4, Point3, Vector3, Vector4};
 use rayon::prelude::*;
 use tracing::{debug, error, span, trace, Level};
 
+use crate::config::{LocatorConfig, RadarInstanceConfig};
+
 use super::detect::{BBox, RobotDetection};
 use cluster::dbscan;
 
@@ -122,6 +124,21 @@ impl Locator {
 
         debug!("Robot locations found: {:?}", robot_locations);
         Ok(robot_locations)
+    }
+
+    pub fn from_config(
+        locator_config: &LocatorConfig,
+        instance_config: &RadarInstanceConfig,
+    ) -> Result<Self> {
+        Locator::new(
+            locator_config.cluster_epsilon,
+            locator_config.cluster_min_points,
+            locator_config.min_valid_distance,
+            locator_config.max_valid_distance,
+            Matrix4::from_row_slice(&instance_config.lidar_to_camera),
+            Matrix3::from_row_slice(&instance_config.intrinsic),
+            locator_config.max_depth_map_queue_size,
+        )
     }
 
     pub fn update_background_depth_map(
