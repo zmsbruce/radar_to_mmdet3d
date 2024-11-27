@@ -67,6 +67,7 @@ impl RadarConfig {
 pub struct SourceConfig {
     pub video: Vec<VideoSourceConfig>,
     pub point_cloud_file_path: String,
+    pub output_dir_path: String,
 }
 
 #[derive(Debug, Deserialize)]

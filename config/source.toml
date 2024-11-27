@@ -1,5 +1,7 @@
 point_cloud_file_path = "/home/zmsbruce/2024-08-11-17-56-02-873.hdf5"
 
+output_dir_path = "output"
+
 [[video]]
 
 name = "Left"
