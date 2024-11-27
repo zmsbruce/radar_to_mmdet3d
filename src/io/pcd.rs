@@ -1,5 +1,6 @@
 use std::fmt::Write;
 use std::path::Path;
+use std::sync::Arc;
 
 use anyhow::{anyhow, Context, Result};
 use nalgebra::Point3;
@@ -362,15 +363,15 @@ async fn read_pcd_ascii<R: AsyncBufReadExt + Unpin>(
     Ok(points)
 }
 
-pub async fn save_pointcloud_async<P, I>(points: I, path: P) -> Result<()>
+pub async fn save_pointcloud<P>(points: Arc<Vec<Point3<f32>>>, path: P) -> Result<()>
 where
     P: AsRef<Path> + Send + Sync,
-    I: IntoIterator<Item = Point3<f32>> + Send + 'static,
 {
     let file_path = path.as_ref();
     let file = File::create(file_path)
         .await
         .with_context(|| format!("Failed to create file at {:?}", file_path))?;
+
     let mut writer = BufWriter::new(file);
 
     writer.write_all(b"VERSION .7\n").await?;
@@ -379,19 +380,19 @@ where
     writer.write_all(b"TYPE F F F\n").await?;
     writer.write_all(b"COUNT 1 1 1\n").await?;
 
-    let points: Vec<Point3<f32>> = points.into_iter().collect();
+    let points_len = points.len();
     writer
-        .write_all(format!("WIDTH {}\n", points.len()).as_bytes())
+        .write_all(format!("WIDTH {}\n", points_len).as_bytes())
         .await?;
     writer.write_all(b"HEIGHT 1\n").await?;
     writer.write_all(b"VIEWPOINT 0 0 0 1 0 0 0\n").await?;
     writer
-        .write_all(format!("POINTS {}\n", points.len()).as_bytes())
+        .write_all(format!("POINTS {}\n", points_len).as_bytes())
         .await?;
     writer.write_all(b"DATA ascii\n").await?;
 
-    let mut buffer = String::with_capacity(points.len() * 32);
-    for point in points {
+    let mut buffer = String::with_capacity(points_len * 32);
+    for point in points.iter() {
         writeln!(&mut buffer, "{} {} {}", point.x, point.y, point.z)
             .expect("Failed to write to string buffer");
     }
@@ -511,15 +512,15 @@ DATA binary
 
     #[tokio::test]
     async fn test_save_pointcloud_async() {
-        let points = vec![
+        let points = Arc::new(vec![
             Point3::new(1.0, 2.0, 3.0),
             Point3::new(4.0, 5.0, 6.0),
             Point3::new(7.0, 8.0, 9.0),
-        ];
+        ]);
         let temp_file = tempfile::NamedTempFile::new().expect("Failed to create tempfile");
         let file_path = temp_file.path().to_path_buf();
 
-        save_pointcloud_async(points.clone(), &file_path)
+        save_pointcloud(points.clone(), &file_path)
             .await
             .expect("Failed to save point cloud");
 
@@ -538,7 +539,7 @@ DATA binary
         assert!(saved_content.contains("POINTS 3"));
         assert!(saved_content.contains("DATA ascii"));
 
-        for point in points {
+        for point in points.iter() {
             let point_str = format!("{} {} {}", point.x, point.y, point.z);
             assert!(saved_content.contains(&point_str));
         }

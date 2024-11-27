@@ -9,7 +9,7 @@ pub mod hdf5;
 pub mod pcd;
 pub mod video;
 
-pub async fn save_image(image: DynamicImage, path: PathBuf) -> Result<()> {
+pub async fn save_image(image: &DynamicImage, path: PathBuf) -> Result<()> {
     let mut buffer = Cursor::new(Vec::new());
     let format = image::ImageFormat::Png;
 
