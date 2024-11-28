@@ -1,6 +1,6 @@
 use std::fmt::Debug;
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{anyhow, Result};
 use image::{imageops::FilterType, DynamicImage, GenericImageView};
 use ndarray::{s, Array2, Array4, Axis};
 use ort::{
@@ -128,12 +128,25 @@ impl Yolo {
         };
 
         let session = Session::builder()
-            .context("Failed to create session builder")?
+            .map_err(|e| {
+                error!("Failed to build session builder: {e}");
+                e
+            })?
             .with_execution_providers(providers)
-            .context("Failed to register execution providers")?
-            .with_optimization_level(GraphOptimizationLevel::Level3)?
+            .map_err(|e| {
+                error!("Failed to registers execution providers: {e}");
+                e
+            })?
+            .with_optimization_level(GraphOptimizationLevel::Level3)
+            .map_err(|e| {
+                error!("Failed to set optimization level: {e}");
+                e
+            })?
             .commit_from_file(&self.onnx_path)
-            .context("Failed to commit session from memory")?;
+            .map_err(|e| {
+                error!("Failed to commit from file: {e}");
+                e
+            })?;
 
         self.model = Some(session);
 
@@ -147,17 +160,19 @@ impl Yolo {
 
         trace!("Starting inference.");
 
-        let (input_tensor, original_dims) = self
-            .preprocess_image(image)
-            .context("Failed to preprocess image")?;
+        let (input_tensor, original_dims) = self.preprocess_image(image).map_err(|e| {
+            error!("Failed to preprocess image: {e}");
+            e
+        })?;
         trace!(
             "Image preprocessed with original dimensions = {:?}",
             original_dims
         );
 
-        let model_output = self
-            .run_inference(input_tensor)
-            .context("Failed to run inference")?;
+        let model_output = self.run_inference(input_tensor).map_err(|e| {
+            error!("Failed to run inference: {e}");
+            e
+        })?;
         trace!("Inference completed, raw model output received.");
 
         let detections = self.process_yolov8_output(model_output, original_dims);
@@ -203,14 +218,17 @@ impl Yolo {
 
         if let Some(model) = &self.model {
             let outputs = model
-                .run(
-                    inputs!["images" => input_tensor.view()]
-                        .context("Failed to construct inputs")?,
-                )
-                .context("Failed to run model")?;
+                .run(inputs!["images" => input_tensor.view()]?)
+                .map_err(|e| {
+                    error!("Failed to run session: {e}");
+                    e
+                })?;
             let output = outputs["output0"]
                 .try_extract_tensor::<f32>()
-                .context("Failed to extract tensor from output")?
+                .map_err(|e| {
+                    error!("Failed to extract tensor: {e}");
+                    e
+                })?
                 .t()
                 .slice(s![.., .., 0])
                 .into_owned();

@@ -1,4 +1,4 @@
-use anyhow::{anyhow, Context, Result};
+use anyhow::{anyhow, Result};
 use hdf5::{Dataset, File};
 use nalgebra::Point3;
 use ndarray_015::{s, Ix2};
@@ -14,16 +14,13 @@ impl Hdf5PointCloudReader {
     where
         P: AsRef<std::path::Path> + std::fmt::Debug + std::marker::Copy,
     {
-        let file = File::open(file_path)
-            .context("Failed to open hdf5 file")
-            .map_err(|e| {
-                error!("Failed to open hdf5 file {:?}: {}", file_path, e);
-                e
-            })?;
+        let file = File::open(file_path).map_err(|e| {
+            error!("Failed to open hdf5 file {:?}: {}", file_path, e);
+            e
+        })?;
 
         let dataset = file
             .datasets()
-            .context("Failed to get datasets for hdf5 file")
             .map_err(|e| {
                 error!("Failed to get datasets: {}", e);
                 e
@@ -61,10 +58,10 @@ impl Hdf5PointCloudReader {
 
         let slice = s![frame_idx, .., ..];
 
-        let dtype = self
-            .dataset
-            .dtype()
-            .context("Failed to get dataset element type")?;
+        let dtype = self.dataset.dtype().map_err(|e| {
+            error!("Failed to get dataset element type: {}", e);
+            e
+        })?;
 
         if dtype.is::<f32>() {
             let points = self
@@ -154,10 +151,10 @@ mod tests {
 
     #[test]
     fn test_invalid_dataset_shape() -> Result<()> {
-        let temp_file = NamedTempFile::new().context("Failed to create temporary file")?;
+        let temp_file = NamedTempFile::new()?;
         let file_path = temp_file.path();
 
-        let file = File::create(file_path).context("Failed to create test HDF5 file")?;
+        let file = File::create(file_path)?;
         let shape = [2, 5, 2]; // Invalid shape: last dimension must be 3
         file.new_dataset::<f32>()
             .shape(shape)
@@ -171,10 +168,10 @@ mod tests {
 
     #[test]
     fn test_missing_point_clouds_dataset() -> Result<()> {
-        let temp_file = NamedTempFile::new().context("Failed to create temporary file")?;
+        let temp_file = NamedTempFile::new()?;
         let file_path = temp_file.path();
 
-        File::create(file_path).context("Failed to create test HDF5 file")?;
+        File::create(file_path)?;
 
         let reader = Hdf5PointCloudReader::from_file(file_path);
         assert!(

@@ -6,7 +6,7 @@ use std::{
     fmt::{self, Display},
 };
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{anyhow, Result};
 use image::DynamicImage;
 use tracing::{debug, error, span, trace, Level};
 
@@ -31,9 +31,9 @@ pub enum RobotLabel {
     RedSentry,
 }
 
-impl Display for RobotLabel {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let description = match self {
+impl RobotLabel {
+    pub fn name(&self) -> &str {
+        match self {
             RobotLabel::BlueHero => "Blue Hero",
             RobotLabel::BlueEngineer => "Blue Engineer",
             RobotLabel::BlueInfantryThree => "Blue Infantry Three",
@@ -46,8 +46,30 @@ impl Display for RobotLabel {
             RobotLabel::RedInfantryFive => "Red Infantry Five",
             RobotLabel::BlueSentry => "Blue Sentry",
             RobotLabel::RedSentry => "Red Sentry",
-        };
-        write!(f, "{}", description)
+        }
+    }
+
+    pub fn name_abbr(&self) -> &str {
+        match self {
+            RobotLabel::BlueHero => "B1",
+            RobotLabel::BlueEngineer => "B2",
+            RobotLabel::BlueInfantryThree => "B3",
+            RobotLabel::BlueInfantryFour => "B4",
+            RobotLabel::BlueInfantryFive => "B5",
+            RobotLabel::RedHero => "R1",
+            RobotLabel::RedEngineer => "R2",
+            RobotLabel::RedInfantryThree => "R3",
+            RobotLabel::RedInfantryFour => "R4",
+            RobotLabel::RedInfantryFive => "R5",
+            RobotLabel::BlueSentry => "B7",
+            RobotLabel::RedSentry => "R7",
+        }
+    }
+}
+
+impl Display for RobotLabel {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.name())
     }
 }
 
@@ -193,13 +215,15 @@ impl RobotDetector {
     }
 
     pub fn build_models(&mut self) -> Result<()> {
-        self.car_detector
-            .build(self.execution)
-            .context("Failed to build car detector")?;
+        self.car_detector.build(self.execution).map_err(|e| {
+            error!("Failed to build car detector model: {e}");
+            e
+        })?;
 
-        self.armor_detector
-            .build(self.execution)
-            .context("Failed to build armor detector")?;
+        self.armor_detector.build(self.execution).map_err(|e| {
+            error!("Failed to build armor detector model: {e}");
+            e
+        })?;
 
         Ok(())
     }
@@ -326,8 +350,7 @@ mod tests {
 
         robot_detector.build_models()?;
 
-        let image = image::open(PathBuf::from("assets/test/battlefield.png"))
-            .context("Failed to read image")?;
+        let image = image::open(PathBuf::from("assets/test/battlefield.png"))?;
 
         let detections = robot_detector.detect(&image)?;
         assert_eq!(detections.len(), 6);

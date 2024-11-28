@@ -26,6 +26,8 @@ pub struct Locator {
     cluster_min_points: usize,
     min_valid_distance: f32,
     max_valid_distance: f32,
+    min_valid_distance_diff: f32,
+    max_valid_distance_diff: f32,
     background_depth_map: ImageBuffer<Luma<f32>, Vec<f32>>,
     depth_map_queue: VecDeque<ImageBuffer<Luma<f32>, Vec<f32>>>,
     lidar_to_camera_transform: Matrix4<f32>,
@@ -41,6 +43,8 @@ impl Locator {
         cluster_min_points: usize,
         min_valid_distance: f32,
         max_valid_distance: f32,
+        min_valid_distance_diff: f32,
+        max_valid_distance_diff: f32,
         lidar_to_camera_transform: Matrix4<f32>,
         camera_intrinsic: Matrix3<f32>,
         max_depth_map_queue_size: usize,
@@ -82,6 +86,8 @@ impl Locator {
             cluster_min_points,
             min_valid_distance,
             max_valid_distance,
+            min_valid_distance_diff,
+            max_valid_distance_diff,
             background_depth_map: ImageBuffer::default(),
             depth_map_queue: VecDeque::with_capacity(max_depth_map_queue_size),
             lidar_to_camera_transform,
@@ -111,6 +117,11 @@ impl Locator {
             return Err(anyhow!("Background depth map is empty"));
         }
 
+        if detections.is_empty() {
+            trace!("Detections is empty, no need for location.");
+            return Ok(Vec::new());
+        }
+
         trace!("Getting robot depth map");
         let robot_depth_map = self.get_robot_depth_map(points);
 
@@ -135,6 +146,8 @@ impl Locator {
             locator_config.cluster_min_points,
             locator_config.min_valid_distance,
             locator_config.max_valid_distance,
+            locator_config.min_valid_distance_diff,
+            locator_config.max_valid_distance_diff,
             Matrix4::from_row_slice(&instance_config.lidar_to_camera),
             Matrix3::from_row_slice(&instance_config.intrinsic),
             locator_config.max_depth_map_queue_size,
@@ -170,16 +183,10 @@ impl Locator {
                     && lidar_point.x > self.min_valid_distance
                 {
                     let image_point = self.lidar_to_image(lidar_point);
-                    debug!(
-                        "Lidar point: {:?}, image point: {:?}",
-                        lidar_point, image_point
-                    );
                     let (u, v) = (image_point.x.round() as i32, image_point.y.round() as i32);
                     if u >= 0 && (u as u32) < image_width && v >= 0 && (v as u32) < image_height {
-                        trace!("Point is in image dimension and kept.");
                         Some((u as u32, v as u32, image_point.z))
                     } else {
-                        trace!("Point is out of image dimension and filtered.");
                         None
                     }
                 } else {
@@ -187,6 +194,11 @@ impl Locator {
                 }
             })
             .collect();
+
+        debug!(
+            "Size of filtered points in updating background depth map: {}",
+            image_points_filtered.len()
+        );
 
         image_points_filtered.into_iter().for_each(|point| {
             let (u, v, depth) = point;
@@ -248,16 +260,10 @@ impl Locator {
                     && lidar_point.x > self.min_valid_distance
                 {
                     let image_point = self.lidar_to_image(lidar_point);
-                    debug!(
-                        "Lidar point: {:?}, image point: {:?}",
-                        lidar_point, image_point
-                    );
                     let (u, v) = (image_point.x.round() as i32, image_point.y.round() as i32);
                     if u >= 0 && (u as u32) < image_width && v >= 0 && (v as u32) < image_height {
-                        trace!("Point is in image dimension and kept.");
                         Some((u as u32, v as u32, image_point.z))
                     } else {
-                        trace!("Point is out of image dimension and filtered.");
                         None
                     }
                 } else {
@@ -286,17 +292,19 @@ impl Locator {
             ImageBuffer::new(image_width, image_height);
         self.depth_map_queue.iter().for_each(|depth_map| {
             difference_depth_map
-                .enumerate_pixels_mut()
+                .iter_mut()
+                .zip(depth_map.iter())
+                .zip(self.background_depth_map.iter())
                 .par_bridge()
-                .for_each(|(x, y, pixel)| {
-                    let depth_value = depth_map.get_pixel(x, y).0[0];
-                    let background_depth_value = self.background_depth_map.get_pixel(x, y).0[0];
-
-                    let difference = (depth_value - background_depth_value).abs();
-                    if difference > self.min_valid_distance && difference < self.max_valid_distance
+                .for_each(|((diff_depth, depth), background_depth)| {
+                    if !depth.is_normal() {
+                        return;
+                    }
+                    let difference = background_depth - depth;
+                    if difference > self.min_valid_distance_diff
+                        && difference < self.max_valid_distance_diff
                     {
-                        debug!("Difference depth map x: {}, y: {}, depth: {}, background: {}, difference: {}", x, y, depth_value, background_depth_value, difference);
-                        pixel.0[0] = difference;
+                        *diff_depth = difference;
                     }
                 });
         });
@@ -329,14 +337,7 @@ impl Locator {
             .iter()
             .map(|(x, y, depth)| {
                 let image_point = Point3::new(*x as f32, *y as f32, *depth);
-
                 let lidar_point = self.image_to_lidar(&image_point);
-
-                debug!(
-                    "Image point: {:?}, lidar point: {:?}",
-                    image_point, lidar_point
-                );
-
                 lidar_point
             })
             .collect();
@@ -482,6 +483,8 @@ mod tests {
             10,
             0.1,
             100.0,
+            0.1,
+            100.0,
             lidar_to_camera_transform,
             camera_intrinsic,
             4,
@@ -503,6 +506,8 @@ mod tests {
         let mut locator = Locator::new(
             0.5,
             10,
+            0.1,
+            100.0,
             0.1,
             100.0,
             lidar_to_camera_transform,

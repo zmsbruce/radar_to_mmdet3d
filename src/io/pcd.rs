@@ -1,4 +1,4 @@
-use anyhow::{anyhow, Context, Result};
+use anyhow::{anyhow, Result};
 use nalgebra::Point3;
 use std::fmt::Write;
 use std::fs::File;
@@ -14,19 +14,21 @@ struct PcdHeader {
     data_format: String,
 }
 
-pub fn read_pcd_from_file(file_path: &str) -> Result<Vec<Vec<f64>>> {
+pub fn read_pcd_from_file<P>(file_path: P) -> Result<Vec<Vec<f64>>>
+where
+    P: AsRef<std::path::Path> + std::fmt::Debug,
+{
     let span = span!(Level::TRACE, "read_pcd_from_file");
     let _enter = span.enter();
 
-    debug!("Opening file: {}", file_path);
-    let file = File::open(file_path).map_err(|e| {
-        error!("Failed to open file: {}: {}", file_path, e);
+    debug!("Opening file: {:?}", file_path);
+    let file = File::open(&file_path).map_err(|e| {
+        error!("Failed to open file: {:?}: {}", file_path, e);
         e
     })?;
     let mut reader = BufReader::new(file);
 
-    let points =
-        read_pcd_from_reader(&mut reader).context("Failed to read points from BufReader")?;
+    let points = read_pcd_from_reader(&mut reader)?;
 
     trace!("Successfully read points with length: {}", points.len());
     Ok(points)
@@ -37,7 +39,7 @@ fn read_pcd_from_reader<R: BufRead>(reader: &mut R) -> Result<Vec<Vec<f64>>> {
     let _enter = span.enter();
 
     trace!("Reading PCD header from reader...");
-    let header = parse_pcd_header(reader).context("Failed to parse PCD header")?;
+    let header = parse_pcd_header(reader)?;
 
     trace!("Reading PCD data in {} format", header.data_format);
     if header.data_format == "ascii" {
@@ -64,7 +66,7 @@ fn parse_pcd_header<R: BufRead>(reader: &mut R) -> Result<PcdHeader> {
 
     let lines = reader.lines();
     for line in lines {
-        let line = line.context("Failed to read header line")?;
+        let line = line?;
         let parts: Vec<&str> = line.split_whitespace().collect();
         if parts.is_empty() || parts[0].starts_with('#') {
             continue;
@@ -78,8 +80,8 @@ fn parse_pcd_header<R: BufRead>(reader: &mut R) -> Result<PcdHeader> {
             "SIZE" => {
                 size = parts[1..]
                     .iter()
-                    .map(|s| -> Result<_> { s.parse::<usize>().context("Failed to parse SIZE") })
-                    .collect::<Result<Vec<usize>>>()?;
+                    .map(|s| -> Result<_, _> { s.parse::<usize>() })
+                    .collect::<Result<Vec<usize>, _>>()?;
                 debug!("Parsed SIZE: {:?}", size);
             }
             "TYPE" => {
@@ -128,10 +130,8 @@ fn read_pcd_binary<R: Read>(mut reader: R, header: &PcdHeader) -> Result<Vec<Vec
     let point_sz_bytes: usize = header.size.iter().sum();
     let mut buffer = vec![0u8; point_sz_bytes];
 
-    for point_idx in 0..header.points {
-        reader
-            .read_exact(&mut buffer)
-            .context(format!("Failed to read point {point_idx}"))?;
+    for _ in 0..header.points {
+        reader.read_exact(&mut buffer)?;
 
         let mut point = Vec::with_capacity(header.fields.len());
         let mut offset = 0;
@@ -143,19 +143,11 @@ fn read_pcd_binary<R: Read>(mut reader: R, header: &PcdHeader) -> Result<Vec<Vec
             match field_type {
                 'F' => {
                     if *field_sz == 4 {
-                        let value = f32::from_le_bytes(
-                            buffer[start..end]
-                                .try_into()
-                                .context("Failed to parse buffer to f32")?,
-                        );
+                        let value = f32::from_le_bytes(buffer[start..end].try_into()?);
                         debug!("Parsed f32 value: {}", value);
                         point.push(value as f64);
                     } else if *field_sz == 8 {
-                        let value = f64::from_le_bytes(
-                            buffer[start..end]
-                                .try_into()
-                                .context("Failed to parse buffer to f64")?,
-                        );
+                        let value = f64::from_le_bytes(buffer[start..end].try_into()?);
                         debug!("Parsed f64 value: {}", value);
                         point.push(value);
                     } else {
@@ -167,21 +159,9 @@ fn read_pcd_binary<R: Read>(mut reader: R, header: &PcdHeader) -> Result<Vec<Vec
                 'U' => {
                     let value = match *field_sz {
                         1 => buffer[start] as u64,
-                        2 => u16::from_le_bytes(
-                            buffer[start..end]
-                                .try_into()
-                                .context("Failed to parse buffer to u16")?,
-                        ) as u64,
-                        4 => u32::from_le_bytes(
-                            buffer[start..end]
-                                .try_into()
-                                .context("Failed to parse buffer to u32")?,
-                        ) as u64,
-                        8 => u64::from_le_bytes(
-                            buffer[start..end]
-                                .try_into()
-                                .context("Failed to parse buffer to u64")?,
-                        ),
+                        2 => u16::from_le_bytes(buffer[start..end].try_into()?) as u64,
+                        4 => u32::from_le_bytes(buffer[start..end].try_into()?) as u64,
+                        8 => u64::from_le_bytes(buffer[start..end].try_into()?),
                         _ => {
                             return Err(anyhow!(
                                 "Field size {field_sz} not matched to type {field_type}"
@@ -194,21 +174,9 @@ fn read_pcd_binary<R: Read>(mut reader: R, header: &PcdHeader) -> Result<Vec<Vec
                 'I' => {
                     let value = match *field_sz {
                         1 => buffer[start] as i64,
-                        2 => i16::from_le_bytes(
-                            buffer[start..end]
-                                .try_into()
-                                .context("Failed to parse buffer to i16")?,
-                        ) as i64,
-                        4 => i32::from_le_bytes(
-                            buffer[start..end]
-                                .try_into()
-                                .context("Failed to parse buffer to i32")?,
-                        ) as i64,
-                        8 => i64::from_le_bytes(
-                            buffer[start..end]
-                                .try_into()
-                                .context("Failed to parse buffer to i64")?,
-                        ) as i64,
+                        2 => i16::from_le_bytes(buffer[start..end].try_into()?) as i64,
+                        4 => i32::from_le_bytes(buffer[start..end].try_into()?) as i64,
+                        8 => i64::from_le_bytes(buffer[start..end].try_into()?) as i64,
                         _ => {
                             return Err(anyhow!(
                                 "Field size {field_sz} not matched to type {field_type}"
@@ -244,7 +212,7 @@ fn read_pcd_ascii<R: BufRead>(reader: R, header: &PcdHeader) -> Result<Vec<Vec<f
 
     let lines = reader.lines();
     for line in lines {
-        let line = line.context("Failed to read line")?;
+        let line = line?;
         let values: Vec<&str> = line.split_whitespace().collect();
 
         let mut point = Vec::with_capacity(header.fields.len());
@@ -256,13 +224,8 @@ fn read_pcd_ascii<R: BufRead>(reader: R, header: &PcdHeader) -> Result<Vec<Vec<f
             match field_type {
                 'F' => {
                     let parsed_value = match *field_sz {
-                        4 => value
-                            .parse::<f32>()
-                            .context(format!("Failed to parse '{}' as f32", value))?
-                            as f64,
-                        8 => value
-                            .parse::<f64>()
-                            .context(format!("Failed to parse '{}' as f64", value))?,
+                        4 => value.parse::<f32>()? as f64,
+                        8 => value.parse::<f64>()?,
                         _ => {
                             return Err(anyhow!(
                                 "Unsupported float size: {} for field_type {}",
@@ -276,22 +239,10 @@ fn read_pcd_ascii<R: BufRead>(reader: R, header: &PcdHeader) -> Result<Vec<Vec<f
                 }
                 'U' => {
                     let parsed_value = match *field_sz {
-                        1 => value
-                            .parse::<u8>()
-                            .context(format!("Failed to parse '{}' as u8", value))?
-                            as f64,
-                        2 => value
-                            .parse::<u16>()
-                            .context(format!("Failed to parse '{}' as u16", value))?
-                            as f64,
-                        4 => value
-                            .parse::<u32>()
-                            .context(format!("Failed to parse '{}' as u32", value))?
-                            as f64,
-                        8 => value
-                            .parse::<u64>()
-                            .context(format!("Failed to parse '{}' as u64", value))?
-                            as f64,
+                        1 => value.parse::<u8>()? as f64,
+                        2 => value.parse::<u16>()? as f64,
+                        4 => value.parse::<u32>()? as f64,
+                        8 => value.parse::<u64>()? as f64,
                         _ => {
                             return Err(anyhow!(
                                 "Unsupported unsigned integer size: {} for field_type {}",
@@ -305,22 +256,10 @@ fn read_pcd_ascii<R: BufRead>(reader: R, header: &PcdHeader) -> Result<Vec<Vec<f
                 }
                 'I' => {
                     let parsed_value = match *field_sz {
-                        1 => value
-                            .parse::<i8>()
-                            .context(format!("Failed to parse '{}' as i8", value))?
-                            as f64,
-                        2 => value
-                            .parse::<i16>()
-                            .context(format!("Failed to parse '{}' as i16", value))?
-                            as f64,
-                        4 => value
-                            .parse::<i32>()
-                            .context(format!("Failed to parse '{}' as i32", value))?
-                            as f64,
-                        8 => value
-                            .parse::<i64>()
-                            .context(format!("Failed to parse '{}' as i64", value))?
-                            as f64,
+                        1 => value.parse::<i8>()? as f64,
+                        2 => value.parse::<i16>()? as f64,
+                        4 => value.parse::<i32>()? as f64,
+                        8 => value.parse::<i64>()? as f64,
                         _ => {
                             return Err(anyhow!(
                                 "Unsupported signed integer size: {} for field_type {}",
@@ -349,14 +288,13 @@ fn read_pcd_ascii<R: BufRead>(reader: R, header: &PcdHeader) -> Result<Vec<Vec<f
     Ok(points)
 }
 
-pub fn save_pointcloud<P, I>(points: I, path: P) -> Result<()>
+pub fn save_pointcloud<P>(points: &[Point3<f32>], path: P) -> Result<()>
 where
     P: AsRef<Path>,
-    I: IntoIterator<Item = Point3<f32>>,
 {
     let file_path = path.as_ref();
-    let file = File::create(file_path)
-        .with_context(|| format!("Failed to create file at {:?}", file_path))?;
+    let file = File::create(file_path)?;
+
     let mut writer = BufWriter::new(file);
 
     writer.write_all(b"VERSION .7\n")?;
@@ -365,7 +303,6 @@ where
     writer.write_all(b"TYPE F F F\n")?;
     writer.write_all(b"COUNT 1 1 1\n")?;
 
-    let points: Vec<Point3<f32>> = points.into_iter().collect();
     writer.write_all(format!("WIDTH {}\n", points.len()).as_bytes())?;
     writer.write_all(b"HEIGHT 1\n")?;
     writer.write_all(b"VIEWPOINT 0 0 0 1 0 0 0\n")?;
@@ -502,7 +439,7 @@ DATA binary
         let temp_file = tempfile::NamedTempFile::new().expect("Failed to create tempfile");
         let file_path = temp_file.path().to_path_buf();
 
-        save_pointcloud(points.clone(), &file_path).expect("Failed to save point cloud");
+        save_pointcloud(&points, &file_path).expect("Failed to save point cloud");
 
         let saved_content =
             fs::read_to_string(&file_path).expect("Failed to read saved point cloud file");
