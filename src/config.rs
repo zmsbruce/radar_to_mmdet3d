@@ -28,6 +28,8 @@ pub struct LocatorConfig {
     pub cluster_min_points: usize,
     pub min_valid_distance: f32,
     pub max_valid_distance: f32,
+    pub min_valid_distance_diff: f32,
+    pub max_valid_distance_diff: f32,
     pub max_depth_map_queue_size: usize,
 }
 
