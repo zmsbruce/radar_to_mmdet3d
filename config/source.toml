@@ -1,18 +1,20 @@
-point_cloud_file_path = "/home/zmsbruce/2024-08-11-17-56-02-873.hdf5"
-
-output_dir_path = "output"
-
-[[video]]
-
-name = "Left"
-file_path = "/home/zmsbruce/2024-08-11-17-56-02-874-Left.avi"
-
+# Example
+#
+# point_cloud_file_path = "/home/zmsbruce/2024-08-11-17-56-02-873.hdf5"
+#
+# output_dir_path = "output"
+#
 # [[video]]
-
+#
+# name = "Left"
+# file_path = "/home/zmsbruce/2024-08-11-17-56-02-874-Left.avi"
+#
+# [[video]]
+#
 # name = "Middle"
 # file_path = "/home/zmsbruce/2024-08-11-17-56-02-874-Middle.avi"
-
-[[video]]
-
-name = "Right"
-file_path = "/home/zmsbruce/2024-08-11-17-56-02-874-Right.avi"
+#
+# [[video]]
+#
+# name = "Right"
+# file_path = "/home/zmsbruce/2024-08-11-17-56-02-874-Right.avi"
