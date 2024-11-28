@@ -3,7 +3,7 @@ use ffmpeg_next::{
     self as ffmpeg, decoder, error::EAGAIN, format::context, frame, software::scaling,
 };
 use std::sync::Once;
-use tracing::{debug, error, info, span, trace, warn, Level};
+use tracing::{debug, error, span, trace, warn, Level};
 
 static FFMPEG_INIT: Once = Once::new();
 
@@ -96,13 +96,7 @@ impl VideoReader {
             decoder,
             stream_index,
             scaler,
-            filename: file_path
-                .as_ref()
-                .file_name()
-                .unwrap()
-                .to_str()
-                .unwrap()
-                .to_string(),
+            filename: file_path.as_ref().to_string_lossy().to_string(),
         })
     }
 
@@ -161,7 +155,7 @@ impl VideoReader {
             return Err(anyhow!("n must be greater than 0"));
         }
 
-        debug!("Fetching the {}th frame.", n);
+        debug!("Fetching the next {}th frame.", n);
         let mut skipped = 0;
 
         loop {
@@ -180,7 +174,7 @@ impl VideoReader {
                                 error!("Failed to convert frame to rgb: {e}");
                                 e
                             })?;
-                            debug!("Successfully fetched the {}th frame.", n);
+                            debug!("Successfully fetched the next {}th frame.", n);
                             return Ok(Some(rgb_frame));
                         }
                     }
@@ -200,7 +194,7 @@ impl VideoReader {
                             error!("Failed to convert frame to rgb: {e}");
                             e
                         })?;
-                        trace!("Successfully fetched the {}th frame.", n);
+                        trace!("Successfully fetched the next {}th frame.", n);
                         return Ok(Some(rgb_frame));
                     }
                 }
@@ -220,13 +214,27 @@ impl VideoReader {
         self.next_nth_frame(1)
     }
 
+    pub fn reset(&mut self) -> Result<()> {
+        let span = span!(Level::TRACE, "VideoReader::reset");
+        let _enter = span.enter();
+
+        trace!("Resetting video context.");
+        self.context = ffmpeg::format::input(&self.filename).map_err(|e| {
+            error!("Failed to open video file: {:?}", self.filename);
+            e
+        })?;
+
+        trace!("VideoReader successfully reset.");
+        Ok(())
+    }
+
     fn initialize_ffmpeg() {
         FFMPEG_INIT.call_once(|| {
             if let Err(e) = ffmpeg::init() {
                 error!("Failed to initialize FFmpeg: {:?}", e);
                 panic!("Failed to initialize FFmpeg");
             }
-            info!("FFmpeg library initialized successfully.");
+            trace!("FFmpeg library initialized successfully.");
         });
     }
 }
@@ -248,7 +256,9 @@ mod tests {
                 "-r",
                 "25", // 帧率 25 fps
                 "-pix_fmt",
-                "yuv420p",                     // 像素格式
+                "yuv420p", // 像素格式
+                "-loglevel",
+                "error",
                 output_path.to_str().unwrap(), // 输出路径
             ])
             .status()
