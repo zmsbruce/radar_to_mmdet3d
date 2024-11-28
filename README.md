@@ -5,6 +5,10 @@
 ## 编译和运行
 
 ```sh
+# 拉取仓库文件和代码
+git clone --depth 1 https://github.com/zmsbruce/radar_to_mmdet3d.git
+git lfs pull
+
 # 安装依赖
 sudo apt install clang libavcodec-dev libavformat-dev libavutil-dev pkg-config
 
