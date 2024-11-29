@@ -237,7 +237,10 @@ impl RobotDetector {
         }
 
         trace!("Running car detector inference...");
-        let car_detections = self.car_detector.infer(image)?;
+        let car_detections = self.car_detector.infer_single_image(image).map_err(|e| {
+            error!("Failed to infer camera image in car detector");
+            e
+        })?;
         debug!(
             "Car detector inference complete. Detected {} cars.",
             car_detections.len()
@@ -264,17 +267,13 @@ impl RobotDetector {
             .collect();
 
         trace!("Running armor detector inference on cropped car images...");
-        let armor_detections: Vec<_> = car_images
-            .into_iter()
-            .map(|image| -> Result<_> {
-                let armor_detection = self.armor_detector.infer(&image)?;
-                debug!(
-                    "Armor detector detected {} objects in cropped car image.",
-                    armor_detection.len()
-                );
-                Ok(armor_detection)
-            })
-            .collect::<Result<Vec<_>, _>>()?;
+        let armor_detections: Vec<_> =
+            self.armor_detector
+                .infer_image_batch(&car_images)
+                .map_err(|e| {
+                    error!("Failed to infer car images in armor detector");
+                    e
+                })?;
         debug!(
             "Armor detector inference complete. Processing {} car-armor pairs.",
             armor_detections.len()
