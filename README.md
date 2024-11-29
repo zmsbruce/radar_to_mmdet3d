@@ -10,10 +10,7 @@ git clone --depth 1 https://github.com/zmsbruce/radar_to_mmdet3d.git
 git lfs pull
 
 # 安装依赖
-sudo apt install clang libavcodec-dev libavformat-dev libavutil-dev pkg-config
-
-# 编译
-cargo build --release
+sudo apt install clang libavcodec-dev libavformat-dev libavutil-dev libhdf5-dev hdf5-tools pkg-config
 
 # 运行测试
 cargo test
@@ -29,8 +26,12 @@ cargo run --release
 
 ## TODO
 
-- 添加相机内外参的写入；
-- 为 YOLO 检测支持批量处理，以提升速度；
-- 对定位做改进以提升速度，如深度图更新只添加检测框内的点；
-- 完善日志记录；
-- 添加注释；
+❌ 添加相机内外参的写入
+
+✅ 为 YOLO 检测支持批量处理，以提升速度
+
+❌ 对定位做改进以提升速度，如深度图更新只添加检测框内的点
+
+❌ 完善日志记录
+
+❌ 添加注释
