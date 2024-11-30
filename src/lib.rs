@@ -1,7 +1,8 @@
 use std::{
-    fs::{self, File},
-    io::{BufWriter, Write as _},
-    path::PathBuf,
+    collections::HashMap, 
+    fs::{self, File}, 
+    io::{BufWriter, Write as _}, 
+    path::PathBuf
 };
 
 use align::FrameAligner;
@@ -182,15 +183,14 @@ pub fn locate_and_save_results(
         e
     })?;
 
-    detect_results_frames
+    let locate_results_frames = detect_results_frames
         .into_iter()
         .zip(aligner_iter)
         .enumerate()
         .map(|(frame_idx, (detect_results, (_, point_cloud)))| {
             assert_eq!(detect_results.len(), locators.len());
-
+            
             progress_bar.set_position(frame_idx as u64);
-
             let locate_results = if let Some(point_cloud) = point_cloud {
                 let point_cloud: Vec<_> = point_cloud
                     .into_par_iter()
@@ -230,8 +230,9 @@ pub fn locate_and_save_results(
             };
 
             (frame_idx, (locate_results, detect_results))
-        })
-        .for_each(|(frame_idx, (locate_results, detect_results))| {
+        }).collect::<Vec<_>>();
+
+    locate_results_frames.into_iter().for_each(|(frame_idx, (locate_results, detect_results))| {
             let file_path = root_dir.join(format!("labels/{:06}.txt", frame_idx));
             let file = match File::create(&file_path) {
                 Ok(file) => file,
@@ -243,37 +244,40 @@ pub fn locate_and_save_results(
             
             if let Some(locate_results) = locate_results {
                 let mut writer = BufWriter::new(file);
+
+                let mut results_map = HashMap::with_capacity(locate_results.len());
                 locate_results
                     .into_iter()
                     .zip(detect_results.into_iter())
                     .for_each(|(locate_result, detect_result)| {
                         if locate_result.is_some() && detect_result.is_some() {
-                            locate_result
-                                .unwrap()
-                                .into_iter()
-                                .zip(detect_result.unwrap().into_iter())
-                                .for_each(|(single_locate_result, single_detct_result)| {
-                                    if let Some(single_locate_result) = single_locate_result {
-                                        let line = format!(
-                                            "{:.2} {:.2} {:.2} {:.2} {:.2} {:.2} {:.2} {}\n",
-                                            single_locate_result.center.x,
-                                            single_locate_result.center.y,
-                                            single_locate_result.center.z,
-                                            single_locate_result.depth,
-                                            single_locate_result.width,
-                                            single_locate_result.height,
-                                            0.0,
-                                            single_detct_result.label.name_abbr()
-                                        );
-                                        if let Err(e) = writer.write_all(line.as_bytes()) {
-                                            error!("Failed to write to buffer: {e}");
-                                        }
-                                    }
-                                });
+                            let locate_result = locate_result.unwrap();
+                            let detect_result = detect_result.unwrap();
+                            locate_result.into_iter().zip(detect_result.into_iter()).for_each(|(single_locate_result, single_detct_result)| {
+                                if single_locate_result.is_some() {
+                                    results_map.insert(single_detct_result.label, single_locate_result.unwrap());
+                                }
+                            });
                         }
                     });
+                
+                for (label, location) in results_map {
+                    let line = format!(
+                        "{:.2} {:.2} {:.2} {:.2} {:.2} {:.2} {:.2} {}\n",
+                        location.center.x,
+                        location.center.y,
+                        location.center.z,
+                        location.depth,
+                        location.width,
+                        location.height,
+                        0.0,
+                        label.name_abbr()
+                    );
+                    if let Err(e) = writer.write_all(line.as_bytes()) {
+                        error!("Failed to write to buffer: {e}");
+                    }
+                }
             }
-            
         });
 
     progress_bar.finish_with_message("Finished locating and saving results.");
