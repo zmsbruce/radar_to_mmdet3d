@@ -103,13 +103,13 @@ impl Yolo {
     }
 
     pub fn build(&mut self, execution: Execution) -> Result<()> {
+        let span = span!(Level::TRACE, "Yolo::build");
+        let _enter = span.enter();
+
         if self.model.is_some() {
             warn!("Yolo {:#?} has already been built.", self);
             return Ok(());
         }
-
-        let span = span!(Level::TRACE, "Yolo::build");
-        let _enter = span.enter();
 
         debug!(
             "Building the ONNX model from onnx: {} and execution: {:?}",
@@ -158,7 +158,7 @@ impl Yolo {
         let span = span!(Level::TRACE, "Yolo::infer_single_image");
         let _enter = span.enter();
 
-        trace!("Starting inference.");
+        trace!("Starting inference single image.");
 
         let (input_tensor, original_dims) = self.preprocess_image(image).map_err(|e| {
             error!("Failed to preprocess image: {e}");
@@ -185,10 +185,10 @@ impl Yolo {
     }
 
     pub fn infer_image_batch(&self, image_batch: &[DynamicImage]) -> Result<Vec<Vec<Detection>>> {
-        let span = span!(Level::TRACE, "Yolo::infer_single_image");
+        let span = span!(Level::TRACE, "Yolo::infer_image_batch");
         let _enter = span.enter();
 
-        trace!("Starting inference.");
+        trace!("Starting inference image batch.");
 
         let (input_tensor, original_dims) =
             self.preprocess_images_batch(image_batch).map_err(|e| {
@@ -208,8 +208,8 @@ impl Yolo {
 
         let detections = self.process_yolov8_output_batch(model_output, original_dims);
         trace!(
-            "Processed YOLOv8 output, number of detections: {}",
-            detections.len()
+            "Processed YOLOv8 output, number of detections: {:?}",
+            detections.iter().map(|det| det.len()).collect::<Vec<_>>()
         );
 
         Ok(detections)
@@ -314,7 +314,7 @@ impl Yolo {
     }
 
     fn run_inference_batch(&self, input_tensor: Array4<f32>) -> Result<Array3<f32>> {
-        let span = span!(Level::TRACE, "Yolo::run_inference");
+        let span = span!(Level::TRACE, "Yolo::run_inference_batch");
         let _enter = span.enter();
 
         if let Some(model) = &self.model {
