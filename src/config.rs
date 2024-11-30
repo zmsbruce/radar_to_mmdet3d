@@ -31,6 +31,7 @@ pub struct LocatorConfig {
     pub min_valid_distance_diff: f32,
     pub max_valid_distance_diff: f32,
     pub max_depth_map_queue_size: usize,
+    pub zoom_factor: f32,
 }
 
 #[derive(Debug, Deserialize)]

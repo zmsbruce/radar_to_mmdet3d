@@ -28,13 +28,14 @@ pub struct Locator {
     max_valid_distance: f32,
     min_valid_distance_diff: f32,
     max_valid_distance_diff: f32,
+    max_depth_map_queue_size: usize,
+    zoom_factor: f32,
     background_depth_map: ImageBuffer<Luma<f32>, Vec<f32>>,
     depth_map_queue: VecDeque<ImageBuffer<Luma<f32>, Vec<f32>>>,
     lidar_to_camera_transform: Matrix4<f32>,
     camera_to_lidar_transform: Matrix4<f32>,
     camera_intrinsic: Matrix3<f32>,
     camera_intrinsic_inverse: Matrix3<f32>,
-    max_depth_map_queue_size: usize,
 }
 
 impl Locator {
@@ -45,9 +46,10 @@ impl Locator {
         max_valid_distance: f32,
         min_valid_distance_diff: f32,
         max_valid_distance_diff: f32,
+        max_depth_map_queue_size: usize,
+        zoom_factor: f32,
         lidar_to_camera_transform: Matrix4<f32>,
         camera_intrinsic: Matrix3<f32>,
-        max_depth_map_queue_size: usize,
     ) -> Result<Self> {
         let span = span!(Level::TRACE, "Locator::new");
         let _enter = span.enter();
@@ -88,13 +90,14 @@ impl Locator {
             max_valid_distance,
             min_valid_distance_diff,
             max_valid_distance_diff,
+            max_depth_map_queue_size,
+            zoom_factor,
             background_depth_map: ImageBuffer::default(),
             depth_map_queue: VecDeque::with_capacity(max_depth_map_queue_size),
             lidar_to_camera_transform,
             camera_to_lidar_transform,
             camera_intrinsic,
             camera_intrinsic_inverse,
-            max_depth_map_queue_size,
         };
         Ok(locator)
     }
@@ -148,29 +151,31 @@ impl Locator {
             locator_config.max_valid_distance,
             locator_config.min_valid_distance_diff,
             locator_config.max_valid_distance_diff,
+            locator_config.max_depth_map_queue_size,
+            locator_config.zoom_factor,
             Matrix4::from_row_slice(&instance_config.lidar_to_camera),
             Matrix3::from_row_slice(&instance_config.intrinsic),
-            locator_config.max_depth_map_queue_size,
         )
     }
 
     pub fn update_background_depth_map(
         &mut self,
         points: &[Point3<f32>],
-        depth_map_size: (u32, u32),
+        image_size: (u32, u32),
     ) -> Result<()> {
-        let (image_width, image_height) = depth_map_size;
+        let (image_width, image_height) = image_size;
+
+        let depth_map_width = (image_width as f32 * self.zoom_factor) as u32;
+        let depth_map_height = (image_height as f32 * self.zoom_factor) as u32;
+
         if self.background_depth_map.is_empty() {
             debug!("Background depth map is empty, initializing.");
-            self.background_depth_map = ImageBuffer::new(image_width, image_height);
-        } else if self.background_depth_map.dimensions() != (image_width, image_height) {
+            self.background_depth_map = ImageBuffer::new(depth_map_width, depth_map_height);
+        } else if self.background_depth_map.dimensions() != (depth_map_width, depth_map_height) {
             return Err(anyhow!(
                 "Dimensions of image is not equal to background depth image"
             ));
         }
-
-        let (image_width, image_height) = self.background_depth_map.dimensions();
-        debug!("Image width and height: {image_width}x{image_height}");
 
         let image_points_filtered: Vec<_> = points
             .iter()
@@ -212,7 +217,8 @@ impl Locator {
     }
 
     fn image_to_lidar(&self, point: &Point3<f32>) -> Point3<f32> {
-        let camera_coor_vector = Vector3::new(point.x, point.y, 1.0);
+        let camera_coor_vector =
+            Vector3::new(point.x / self.zoom_factor, point.y / self.zoom_factor, 1.0);
 
         let (camera_to_lidar_rotate, camera_to_lidar_translate) = (
             self.camera_to_lidar_transform.fixed_view::<3, 3>(0, 0),
@@ -235,8 +241,8 @@ impl Locator {
         let camera_coor_vector = self.camera_intrinsic
             * (self.lidar_to_camera_transform * lidar_coor_vector).view((0, 0), (3, 1));
         Point3::new(
-            camera_coor_vector[0] / camera_coor_vector[2],
-            camera_coor_vector[1] / camera_coor_vector[2],
+            camera_coor_vector[0] * self.zoom_factor / camera_coor_vector[2],
+            camera_coor_vector[1] * self.zoom_factor / camera_coor_vector[2],
             camera_coor_vector[2],
         )
     }
@@ -375,10 +381,11 @@ impl Locator {
             .map(|bbox| {
                 let mut category_pixels: HashMap<isize, Vec<(u32, u32)>> = HashMap::new();
                 let (x_min, x_max, y_min, y_max) = (
-                    (bbox.x_center - bbox.width / 2.0).max(0.0).floor() as u32,
-                    (bbox.x_center + bbox.width / 2.0).ceil() as u32,
-                    (bbox.y_center - bbox.height / 2.0).max(0.0).floor() as u32,
-                    (bbox.y_center + bbox.height / 2.0).ceil() as u32,
+                    ((bbox.x_center - bbox.width / 2.0).max(0.0).floor() * self.zoom_factor) as u32,
+                    ((bbox.x_center + bbox.width / 2.0).ceil() * self.zoom_factor) as u32,
+                    ((bbox.y_center - bbox.height / 2.0).max(0.0).floor() * self.zoom_factor)
+                        as u32,
+                    ((bbox.y_center + bbox.height / 2.0).ceil() * self.zoom_factor) as u32,
                 );
 
                 for y in y_min..=y_max {
@@ -485,9 +492,10 @@ mod tests {
             100.0,
             0.1,
             100.0,
+            4,
+            1.0,
             lidar_to_camera_transform,
             camera_intrinsic,
-            4,
         )
         .unwrap();
 
@@ -510,16 +518,19 @@ mod tests {
             100.0,
             0.1,
             100.0,
+            4,
+            1.0,
             lidar_to_camera_transform,
             camera_intrinsic,
-            4,
         )
         .unwrap();
         locator.background_depth_map = ImageBuffer::new(10, 10);
 
         let mut points = vec![Point3::new(4.0, 6.0, 2.0)];
 
-        locator.get_robot_depth_map(&points);
+        locator
+            .update_background_depth_map(&points, (10, 10))
+            .unwrap();
 
         points = vec![Point3::new(2.0, 3.0, 1.0)];
         let depth_map = locator.get_robot_depth_map(&points);
