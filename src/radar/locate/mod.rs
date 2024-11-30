@@ -189,7 +189,11 @@ impl Locator {
                 {
                     let image_point = self.lidar_to_image(lidar_point);
                     let (u, v) = (image_point.x.round() as i32, image_point.y.round() as i32);
-                    if u >= 0 && (u as u32) < image_width && v >= 0 && (v as u32) < image_height {
+                    if u >= 0
+                        && (u as u32) < depth_map_width
+                        && v >= 0
+                        && (v as u32) < depth_map_height
+                    {
                         Some((u as u32, v as u32, image_point.z))
                     } else {
                         None
