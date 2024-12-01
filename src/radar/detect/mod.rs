@@ -267,13 +267,28 @@ impl RobotDetector {
             .collect();
 
         trace!("Running armor detector inference on cropped car images...");
-        let armor_detections: Vec<_> =
-            self.armor_detector
-                .infer_image_batch(&car_images)
-                .map_err(|e| {
-                    error!("Failed to infer car images in armor detector");
-                    e
-                })?;
+        // let armor_detections: Vec<_> = if !car_images.is_empty() {
+        //     self.armor_detector
+        //         .infer_image_batch(&car_images)
+        //         .map_err(|e| {
+        //             error!("Failed to infer car images in armor detector");
+        //             e
+        //         })?
+        // } else {
+        //     Vec::new()
+        // };
+        let armor_detections = car_images
+            .into_iter()
+            .map(|image| -> Result<_> {
+                let armor_detection = self.armor_detector.infer_single_image(&image)?;
+                debug!(
+                    "Armor detector detected {} objects in cropped car image.",
+                    armor_detection.len()
+                );
+                Ok(armor_detection)
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+
         debug!(
             "Armor detector inference complete. Processing {} car-armor pairs.",
             armor_detections.len()

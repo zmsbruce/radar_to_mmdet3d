@@ -98,6 +98,7 @@ pub fn process_and_save_aligned_frames(
             .progress_chars("#>-"),
     );
     progress_bar.set_message("Processing and saving frames...");
+    progress_bar.enable_steady_tick(std::time::Duration::from_millis(100));
 
     let root_dir = PathBuf::from(root_dir);
 

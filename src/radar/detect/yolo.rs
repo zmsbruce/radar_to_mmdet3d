@@ -184,6 +184,7 @@ impl Yolo {
         Ok(detections)
     }
 
+    #[allow(unused)]
     pub fn infer_image_batch(&self, image_batch: &[DynamicImage]) -> Result<Vec<Vec<Detection>>> {
         let span = span!(Level::TRACE, "Yolo::infer_image_batch");
         let _enter = span.enter();
