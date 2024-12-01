@@ -24,7 +24,7 @@ max_valid_distance_diff = 8000
 
 max_depth_map_queue_size = 4
 
-zoom_factor = 0.5
+zoom_factor = 1.0
 
 [[instances]]
 name = "Left"
