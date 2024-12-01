@@ -8,6 +8,7 @@ use radar_to_mmdet3d::{
     config::{RadarConfig, SourceConfig},
     create_output_dirs, locate_and_save_results, process_and_save_aligned_frames,
     radar::{detect::RobotDetector, locate::Locator},
+    save_calibs,
 };
 use tracing::{error, span, Level};
 use tracing_subscriber::{fmt, layer::SubscriberExt, util::SubscriberInitExt, EnvFilter, Layer};
@@ -37,6 +38,11 @@ fn main() -> Result<()> {
         error!("Failed to load radar configuration: {e}");
         e
     })?;
+    save_calibs(&radar_config.instances, &source_config.output_dir_path).map_err(|e| {
+        error!("Failed to save calibs: {e}");
+        e
+    })?;
+
     let mut detector = RobotDetector::from_config(&radar_config.detect).map_err(|e| {
         error!("Failed to initialize detector from config: {e}");
         e

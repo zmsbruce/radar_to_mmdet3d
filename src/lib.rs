@@ -7,6 +7,7 @@ use std::{
 
 use align::FrameAligner;
 use anyhow::Result;
+use config::RadarInstanceConfig;
 use image::GenericImageView;
 use indicatif::{ProgressBar, ProgressStyle};
 use io::pcd::save_pointcloud;
@@ -29,6 +30,7 @@ pub fn create_output_dirs(root_dir: &str, image_num: usize) -> Result<()> {
         .collect();
     let pointcloud_dir = root_dir.join("points");
     let label_dir = root_dir.join("labels");
+    let calib_dir = root_dir.join("calibs");
 
     for dir in image_dirs {
         fs::create_dir_all(&dir).map_err(|e| {
@@ -42,6 +44,10 @@ pub fn create_output_dirs(root_dir: &str, image_num: usize) -> Result<()> {
     })?;
     fs::create_dir_all(&label_dir).map_err(|e| {
         error!("Failed to create directory {:?}: {e}", label_dir);
+        e
+    })?;
+    fs::create_dir_all(&calib_dir).map_err(|e| {
+        error!("Failed to create directory {:?}: {e}", calib_dir);
         e
     })?;
 
@@ -281,5 +287,42 @@ pub fn locate_and_save_results(
         });
 
     progress_bar.finish_with_message("Finished locating and saving results.");
+    Ok(())
+}
+
+pub fn save_calibs(radar_instances: &[RadarInstanceConfig], root_dir: &str) -> Result<()> {
+    let root_dir = PathBuf::from(root_dir);
+
+    for (idx, instance) in radar_instances.iter().enumerate() {
+        let file_path = root_dir.join(format!("calibs/{:06}.txt", idx));
+        
+        let file = File::create(&file_path).map_err(|e| {
+            error!("Failed to create {:?}: {e}", file_path);
+            e
+        })?;
+        
+        let mut writer = BufWriter::new(file);
+
+        let line = format!(
+            "P{} {} {} {} {} {} {} {} {} {}\n\
+            lidar2cam{} {} {} {} {} {} {} {} {} {} {} {} {} {} {} {} {}",
+            idx,
+            instance.intrinsic[0], instance.intrinsic[1], instance.intrinsic[2],
+            instance.intrinsic[3], instance.intrinsic[4], instance.intrinsic[5],
+            instance.intrinsic[6], instance.intrinsic[7], instance.intrinsic[8],
+            idx,
+            instance.lidar_to_camera[0], instance.lidar_to_camera[1],
+            instance.lidar_to_camera[2], instance.lidar_to_camera[3],
+            instance.lidar_to_camera[4], instance.lidar_to_camera[5],
+            instance.lidar_to_camera[6], instance.lidar_to_camera[7],
+            instance.lidar_to_camera[8], instance.lidar_to_camera[9],
+            instance.lidar_to_camera[10], instance.lidar_to_camera[11],
+            instance.lidar_to_camera[12], instance.lidar_to_camera[13],
+            instance.lidar_to_camera[14], instance.lidar_to_camera[15]
+        );
+        
+        writer.write_all(line.as_bytes())?;
+    }
+
     Ok(())
 }
