@@ -190,7 +190,7 @@ pub fn locate_and_save_results(
         e
     })?;
 
-    let locate_results_frames = detect_results_frames
+    detect_results_frames
         .into_iter()
         .zip(aligner_iter)
         .enumerate()
@@ -237,9 +237,8 @@ pub fn locate_and_save_results(
             };
 
             (frame_idx, (locate_results, detect_results))
-        }).collect::<Vec<_>>();
-
-    locate_results_frames.into_iter().for_each(|(frame_idx, (locate_results, detect_results))| {
+        })
+        .for_each(|(frame_idx, (locate_results, detect_results))| {
             let file_path = root_dir.join(format!("labels/{:06}.txt", frame_idx));
             let file = match File::create(&file_path) {
                 Ok(file) => file,
