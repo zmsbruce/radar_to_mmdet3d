@@ -16,14 +16,14 @@ impl Hdf5PointCloudReader {
     {
         let file = File::open(file_path).map_err(|e| {
             error!("Failed to open hdf5 file {:?}: {}", file_path, e);
-            e
+            anyhow!("Failed to open hdf5 file {:?}: {}", file_path, e)
         })?;
 
         let dataset = file
             .datasets()
             .map_err(|e| {
                 error!("Failed to get datasets: {}", e);
-                e
+                anyhow!("Failed to get datasets: {}", e)
             })?
             .into_iter()
             .find(|dataset| {
@@ -60,7 +60,7 @@ impl Hdf5PointCloudReader {
 
         let dtype = self.dataset.dtype().map_err(|e| {
             error!("Failed to get dataset element type: {}", e);
-            e
+            anyhow!("Failed to get dataset element type: {}", e)
         })?;
 
         if dtype.is::<f32>() {

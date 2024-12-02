@@ -130,22 +130,22 @@ impl Yolo {
         let session = Session::builder()
             .map_err(|e| {
                 error!("Failed to build session builder: {e}");
-                e
+                anyhow!("Failed to build session builder: {e}")
             })?
             .with_execution_providers(providers)
             .map_err(|e| {
                 error!("Failed to registers execution providers: {e}");
-                e
+                anyhow!("Failed to registers execution providers: {e}")
             })?
             .with_optimization_level(GraphOptimizationLevel::Level3)
             .map_err(|e| {
                 error!("Failed to set optimization level: {e}");
-                e
+                anyhow!("Failed to set optimization level: {e}")
             })?
             .commit_from_file(&self.onnx_path)
             .map_err(|e| {
                 error!("Failed to commit from file: {e}");
-                e
+                anyhow!("Failed to commit from file: {e}")
             })?;
 
         self.model = Some(session);
@@ -162,7 +162,7 @@ impl Yolo {
 
         let (input_tensor, original_dims) = self.preprocess_image(image).map_err(|e| {
             error!("Failed to preprocess image: {e}");
-            e
+            anyhow!("Failed to preprocess image: {e}")
         })?;
         trace!(
             "Image preprocessed with original dimensions = {:?}",
@@ -171,7 +171,7 @@ impl Yolo {
 
         let model_output = self.run_inference(input_tensor).map_err(|e| {
             error!("Failed to run inference: {e}");
-            e
+            anyhow!("Failed to run inference: {e}")
         })?;
         trace!("Inference completed, raw model output received.");
 
@@ -194,7 +194,7 @@ impl Yolo {
         let (input_tensor, original_dims) =
             self.preprocess_images_batch(image_batch).map_err(|e| {
                 error!("Failed to preprocess image batch: {e}");
-                e
+                anyhow!("Failed to preprocess image batch: {e}")
             })?;
         trace!(
             "Images preprocessed with original dimensions = {:?}",
@@ -203,7 +203,7 @@ impl Yolo {
 
         let model_output = self.run_inference_batch(input_tensor).map_err(|e| {
             error!("Failed to run inference: {e}");
-            e
+            anyhow!("Failed to run inference: {e}")
         })?;
         trace!("Inference completed, raw model output received.");
 
@@ -294,13 +294,13 @@ impl Yolo {
                 .run(inputs!["images" => input_tensor.view()]?)
                 .map_err(|e| {
                     error!("Failed to run session: {e}");
-                    e
+                    anyhow!("Failed to run session: {e}")
                 })?;
             let output = outputs["output0"]
                 .try_extract_tensor::<f32>()
                 .map_err(|e| {
                     error!("Failed to extract tensor: {e}");
-                    e
+                    anyhow!("Failed to extract tensor: {e}")
                 })?
                 .t()
                 .slice(s![.., .., 0])
@@ -323,13 +323,13 @@ impl Yolo {
                 .run(inputs!["images" => input_tensor.view()]?)
                 .map_err(|e| {
                     error!("Failed to run session: {e}");
-                    e
+                    anyhow!("Failed to run session: {e}")
                 })?;
             let output = outputs["output0"]
                 .try_extract_tensor::<f32>()
                 .map_err(|e| {
                     error!("Failed to extract tensor: {e}");
-                    e
+                    anyhow!("Failed to extract tensor: {e}")
                 })?
                 .t()
                 .slice(s![.., .., ..])

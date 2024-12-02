@@ -73,7 +73,11 @@ impl Locator {
                     "Failed to invert lidar to camera transform {:#?}: {}",
                     lidar_to_camera_transform, e
                 );
-                e
+                anyhow!(
+                    "Failed to invert lidar to camera transform {:#?}: {}",
+                    lidar_to_camera_transform,
+                    e
+                )
             })?;
         let camera_intrinsic_inverse = camera_intrinsic
             .try_inverse()

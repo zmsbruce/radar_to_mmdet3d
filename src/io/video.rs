@@ -30,8 +30,8 @@ impl VideoReader {
 
         trace!("Opening video file to input context");
         let context = ffmpeg::format::input(&file_path).map_err(|e| {
-            error!("Failed to open video file: {:?}", file_path.as_ref());
-            e
+            error!("Failed to open video file: {:?}: {e}", file_path.as_ref());
+            anyhow!("Failed to open video file: {:?}: {e}", file_path.as_ref())
         })?;
 
         trace!("Selecting video stream from context");
@@ -40,7 +40,10 @@ impl VideoReader {
             .best(ffmpeg::media::Type::Video)
             .ok_or_else(|| anyhow!("No video stream found"))
             .map_err(|e| {
-                error!("No video stream found in file: {:?}", file_path.as_ref());
+                error!(
+                    "No video stream found in file: {:?}: {e}",
+                    file_path.as_ref()
+                );
                 e
             })?
             .index();
@@ -49,7 +52,7 @@ impl VideoReader {
             .ok_or_else(|| anyhow!("Failed to get video stream"))
             .map_err(|e| {
                 error!(
-                    "Failed to get video stream for stream index: {}",
+                    "Failed to get video stream for stream index {}: {e}",
                     stream_index
                 );
                 e
@@ -58,14 +61,14 @@ impl VideoReader {
         trace!("Getting decoder from stream parameters");
         let decoder = ffmpeg::codec::Context::from_parameters(stream.parameters())
             .map_err(|e| {
-                error!("Failed to get codec from parameters");
-                e
+                error!("Failed to get codec from parameters: {e}");
+                anyhow!("Failed to get codec from parameters: {e}")
             })?
             .decoder()
             .video()
             .map_err(|e| {
-                error!("Failed to get video decoder");
-                e
+                error!("Failed to get video decoder: {e}");
+                anyhow!("Failed to get video decoder: {e}")
             })?;
 
         debug!(
@@ -87,7 +90,7 @@ impl VideoReader {
         )
         .map_err(|e| {
             error!("Failed to construct scaler: {e}");
-            e
+            anyhow!("Failed to construct scaler: {e}")
         })?;
 
         trace!("VideoReader successfully initialized.");
@@ -124,7 +127,7 @@ impl VideoReader {
                     error!("Error receiving frame from decoder: {e}");
                 }
 
-                e
+                anyhow!("Error receiving frame from decoder: {e}")
             })?;
 
         debug!("Successfully received frame.");
@@ -138,8 +141,8 @@ impl VideoReader {
         trace!("Converting frame to RGB.");
         let mut rgb_frame = frame::Video::empty();
         self.scaler.run(&frame, &mut rgb_frame).map_err(|e| {
-            error!("Error converting frame to RGB: {:?}", e);
-            e
+            error!("Error converting frame to RGB: {e}");
+            anyhow!("Error converting frame to RGB: {e}")
         })?;
 
         debug!("Frame successfully converted to RGB.");
@@ -163,8 +166,8 @@ impl VideoReader {
                 trace!("Processing packet from stream index: {}", stream.index());
                 if stream.index() == self.stream_index {
                     self.decoder.send_packet(&packet).map_err(|e| {
-                        error!("Error sending packet to decoder: {:?}", e);
-                        e
+                        error!("Error sending packet to decoder: {e}");
+                        anyhow!("Error sending packet to decoder: {e}")
                     })?;
                     while let Ok(frame) = self.receive_frame() {
                         skipped += 1;
@@ -172,7 +175,7 @@ impl VideoReader {
                         if skipped == n {
                             let rgb_frame = self.convert_frame_to_rgb(&frame).map_err(|e| {
                                 error!("Failed to convert frame to rgb: {e}");
-                                e
+                                anyhow!("Failed to convert frame to rgb: {e}")
                             })?;
                             debug!("Successfully fetched the next {}th frame.", n);
                             return Ok(Some(rgb_frame));
@@ -183,7 +186,7 @@ impl VideoReader {
                 debug!("No more packets available. Sending EOF to decoder.");
                 self.decoder.send_eof().map_err(|e| {
                     error!("Error sending EOF to decoder: {:?}", e);
-                    e
+                    anyhow!("Error sending EOF to decoder: {:?}", e)
                 })?;
 
                 while let Ok(frame) = self.receive_frame() {
@@ -192,7 +195,7 @@ impl VideoReader {
                     if skipped == n {
                         let rgb_frame = self.convert_frame_to_rgb(&frame).map_err(|e| {
                             error!("Failed to convert frame to rgb: {e}");
-                            e
+                            anyhow!("Failed to convert frame to rgb: {e}")
                         })?;
                         trace!("Successfully fetched the next {}th frame.", n);
                         return Ok(Some(rgb_frame));
@@ -220,8 +223,8 @@ impl VideoReader {
 
         trace!("Resetting video context.");
         self.context = ffmpeg::format::input(&self.filename).map_err(|e| {
-            error!("Failed to open video file: {:?}", self.filename);
-            e
+            error!("Failed to open video file: {:?}: {e}", self.filename);
+            anyhow!("Failed to open video file: {:?}: {e}", self.filename)
         })?;
 
         trace!("VideoReader successfully reset.");

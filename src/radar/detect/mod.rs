@@ -203,8 +203,8 @@ impl RobotDetector {
             config.car_nms_thresh,
             config.armor_nms_thresh,
             Execution::try_from(config.execution.as_str()).map_err(|e| {
-                error!("Invalid execution {}", config.execution);
-                e
+                error!("Invalid execution {}: {e}", config.execution);
+                anyhow!("Invalid execution {}: {e}", config.execution)
             })?,
         ))
     }
@@ -217,12 +217,12 @@ impl RobotDetector {
     pub fn build_models(&mut self) -> Result<()> {
         self.car_detector.build(self.execution).map_err(|e| {
             error!("Failed to build car detector model: {e}");
-            e
+            anyhow!("Failed to build car detector model: {e}")
         })?;
 
         self.armor_detector.build(self.execution).map_err(|e| {
             error!("Failed to build armor detector model: {e}");
-            e
+            anyhow!("Failed to build armor detector model: {e}")
         })?;
 
         Ok(())
@@ -238,8 +238,8 @@ impl RobotDetector {
 
         trace!("Running car detector inference...");
         let car_detections = self.car_detector.infer_single_image(image).map_err(|e| {
-            error!("Failed to infer camera image in car detector");
-            e
+            error!("Failed to infer camera image in car detector: {e}");
+            anyhow!("Failed to infer camera image in car detector: {e}")
         })?;
         debug!(
             "Car detector inference complete. Detected {} cars.",
@@ -267,6 +267,7 @@ impl RobotDetector {
             .collect();
 
         trace!("Running armor detector inference on cropped car images...");
+        // TODO: 使用 `infer_image_batch` 处理并不会加快处理速度且会有概率卡死，先退回到单个图像~
         // let armor_detections: Vec<_> = if !car_images.is_empty() {
         //     self.armor_detector
         //         .infer_image_batch(&car_images)

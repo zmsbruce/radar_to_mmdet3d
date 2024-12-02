@@ -24,7 +24,7 @@ where
     debug!("Opening file: {:?}", file_path);
     let file = File::open(&file_path).map_err(|e| {
         error!("Failed to open file: {:?}: {}", file_path, e);
-        e
+        anyhow!("Failed to open file: {:?}: {}", file_path, e)
     })?;
     let mut reader = BufReader::new(file);
 

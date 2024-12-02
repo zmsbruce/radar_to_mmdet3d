@@ -28,13 +28,13 @@ impl FrameAligner {
         let point_cloud_reader =
             Hdf5PointCloudReader::from_file(pointcloud_file_path).map_err(|e| {
                 error!("Failed to construct point cloud reader: {e}");
-                e
+                e.context("Failed to construct point cloud reader")
             })?;
 
         Ok(Self {
             video_readers: video_readers.map_err(|e| {
                 error!("Failed to construct video readers: {e}");
-                e
+                e.context("Failed to construct video readers")
             })?,
             video_marks: video_marks.iter().map(|val| val.to_string()).collect(),
             point_cloud_reader,
@@ -65,7 +65,7 @@ impl FrameAligner {
             .map(|(idx, reader)| {
                 let frames = reader.total_frames().map_err(|e| {
                     error!("Failed to get total frames of video {}", reader.filename);
-                    e
+                    e.context("Failed to get total frames of video")
                 })?;
 
                 debug!("Total frames of video {}: {}", idx, frames);
@@ -105,7 +105,7 @@ impl FrameAligner {
             .try_for_each(|(idx, reader)| {
                 reader.reset().map_err(|e| {
                     error!("Failed to reset video reader {idx}: {e}");
-                    e
+                    e.context("Failed to reset video reader")
                 })
             })?;
 
@@ -153,7 +153,8 @@ impl FrameAligner {
                         "Failed to get total frames from video {}: {e}",
                         reader.filename
                     );
-                    e
+
+                    e.context("Failed to get total frames from video")
                 })?;
 
                 debug!(
