@@ -2,14 +2,13 @@
 
 从 Robomaster Radar 的点云序列文件（HDF5）和视频生成 MMDetection 3D 数据集
 
-> 从包含点云的 ROS bag 文件生成 HDF5 文件可见 [bag2hdf5](https://github.com/zmsbruce/bag2hdf5.git)
+> 从包含点云的 ROS bag 文件生成 HDF5 文件见 [bag2hdf5](https://github.com/zmsbruce/bag2hdf5.git)
 
 ## 编译和运行
 
 ```sh
 # 拉取仓库文件和代码
-git clone --depth 1 https://github.com/zmsbruce/radar_to_mmdet3d.git
-git lfs pull
+git clone https://github.com/zmsbruce/radar_to_mmdet3d.git
 
 # 安装依赖
 sudo apt install clang libavcodec-dev libavformat-dev libavutil-dev libhdf5-dev hdf5-tools pkg-config
@@ -32,6 +31,6 @@ cargo run --release
 
 ✅ 为 YOLO 检测支持批量处理，以提升速度
 
-✅ 对定位做改进以提升速度，如深度图更新只添加检测框内的点
+✅ 对定位做改进，以提升速度
 
 ❌ 添加注释
