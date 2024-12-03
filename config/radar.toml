@@ -24,7 +24,8 @@ max_valid_distance_diff = 8000
 
 max_depth_map_queue_size = 4
 
-zoom_factor = 1.0
+# 减小 zoom 系数会加快处理速度，但可能降低定位精度
+zoom_factor = 0.5
 
 [[instances]]
 name = "Left"
