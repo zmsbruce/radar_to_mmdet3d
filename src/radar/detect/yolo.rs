@@ -2,11 +2,12 @@ use std::fmt::Debug;
 
 use anyhow::{anyhow, Result};
 use image::{imageops::FilterType, DynamicImage, GenericImageView};
-use ndarray::{s, Array2, Array3, Array4, Axis};
+use ndarray::{s, Array2, Array4, ArrayView4, Axis};
 use ort::{
     inputs, CUDAExecutionProvider, GraphOptimizationLevel, OpenVINOExecutionProvider, Session,
     TensorRTExecutionProvider,
 };
+use rayon::iter::{IntoParallelRefIterator, ParallelBridge, ParallelIterator};
 use tracing::{debug, error, span, trace, warn, Level};
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -127,26 +128,13 @@ impl Yolo {
             ],
         };
 
-        let session = Session::builder()
-            .map_err(|e| {
-                error!("Failed to build session builder: {e}");
-                anyhow!("Failed to build session builder: {e}")
-            })?
-            .with_execution_providers(providers)
-            .map_err(|e| {
-                error!("Failed to registers execution providers: {e}");
-                anyhow!("Failed to registers execution providers: {e}")
-            })?
-            .with_optimization_level(GraphOptimizationLevel::Level3)
-            .map_err(|e| {
-                error!("Failed to set optimization level: {e}");
-                anyhow!("Failed to set optimization level: {e}")
-            })?
-            .commit_from_file(&self.onnx_path)
-            .map_err(|e| {
-                error!("Failed to commit from file: {e}");
-                anyhow!("Failed to commit from file: {e}")
-            })?;
+        let session = Session::builder()?
+            .with_execution_providers(providers)?
+            .with_optimization_level(GraphOptimizationLevel::Level3)?
+            .with_parallel_execution(true)?
+            .with_inter_threads(4)?
+            .with_memory_pattern(true)?
+            .commit_from_file(&self.onnx_path)?;
 
         self.model = Some(session);
 
@@ -169,7 +157,7 @@ impl Yolo {
             original_dims
         );
 
-        let model_output = self.run_inference(input_tensor).map_err(|e| {
+        let model_output = self.run_inference(input_tensor.view()).map_err(|e| {
             error!("Failed to run inference: {e}");
             anyhow!("Failed to run inference: {e}")
         })?;
@@ -184,12 +172,16 @@ impl Yolo {
         Ok(detections)
     }
 
-    #[allow(unused)]
     pub fn infer_image_batch(&self, image_batch: &[DynamicImage]) -> Result<Vec<Vec<Detection>>> {
         let span = span!(Level::TRACE, "Yolo::infer_image_batch");
         let _enter = span.enter();
 
         trace!("Starting inference image batch.");
+
+        if image_batch.is_empty() {
+            trace!("Image batch is empty, return empty result.");
+            return Ok(Vec::new());
+        }
 
         let (input_tensor, original_dims) =
             self.preprocess_images_batch(image_batch).map_err(|e| {
@@ -258,50 +250,39 @@ impl Yolo {
         trace!("Resizing images to {}x{}", width, height);
 
         let mut input = Array4::<f32>::zeros((batch_size, 3, height as usize, width as usize));
-        let mut original_dims = Vec::with_capacity(batch_size);
 
-        for (batch_idx, image) in images.iter().enumerate() {
-            let original_dims_for_image = image.dimensions();
-            original_dims.push(original_dims_for_image);
+        let original_dims: Vec<_> = images.par_iter().map(|image| image.dimensions()).collect();
 
-            let resized_img = image.resize_exact(width, height, FilterType::Nearest);
+        input
+            .axis_chunks_iter_mut(Axis(0), 1)
+            .zip(images.iter())
+            .par_bridge()
+            .for_each(|(mut chunk, image)| {
+                let resized_img = image.resize_exact(width, height, FilterType::Nearest);
+                let binding = resized_img.as_flat_samples_u8().unwrap();
+                let samples = binding.as_slice();
 
-            for (i, pixel) in resized_img
-                .as_flat_samples_u8()
-                .unwrap()
-                .as_slice()
-                .chunks(3)
-                .enumerate()
-            {
-                let x = i % width as usize;
-                let y = i / width as usize;
+                for (i, pixel) in samples.chunks(3).enumerate() {
+                    let x = i % width as usize;
+                    let y = i / width as usize;
 
-                input[[batch_idx, 0, y, x]] = pixel[0] as f32 / 255.0; // Red channel
-                input[[batch_idx, 1, y, x]] = pixel[1] as f32 / 255.0; // Green channel
-                input[[batch_idx, 2, y, x]] = pixel[2] as f32 / 255.0; // Blue channel
-            }
-        }
+                    chunk[[0, 0, y, x]] = pixel[0] as f32 / 255.0;
+                    chunk[[0, 1, y, x]] = pixel[1] as f32 / 255.0;
+                    chunk[[0, 2, y, x]] = pixel[2] as f32 / 255.0;
+                }
+            });
 
         Ok((input, original_dims))
     }
 
-    fn run_inference(&self, input_tensor: Array4<f32>) -> Result<Array2<f32>> {
+    fn run_inference(&self, input_tensor: ArrayView4<f32>) -> Result<Array2<f32>> {
         let span = span!(Level::TRACE, "Yolo::run_inference");
         let _enter = span.enter();
 
         if let Some(model) = &self.model {
-            let outputs = model
-                .run(inputs!["images" => input_tensor.view()]?)
-                .map_err(|e| {
-                    error!("Failed to run session: {e}");
-                    anyhow!("Failed to run session: {e}")
-                })?;
+            let outputs = model.run(inputs!["images" => input_tensor.view()]?)?;
             let output = outputs["output0"]
-                .try_extract_tensor::<f32>()
-                .map_err(|e| {
-                    error!("Failed to extract tensor: {e}");
-                    anyhow!("Failed to extract tensor: {e}")
-                })?
+                .try_extract_tensor::<f32>()?
                 .t()
                 .slice(s![.., .., 0])
                 .into_owned();
@@ -314,33 +295,15 @@ impl Yolo {
         }
     }
 
-    fn run_inference_batch(&self, input_tensor: Array4<f32>) -> Result<Array3<f32>> {
+    fn run_inference_batch(&self, input_tensor: Array4<f32>) -> Result<Vec<Array2<f32>>> {
         let span = span!(Level::TRACE, "Yolo::run_inference_batch");
         let _enter = span.enter();
 
-        if let Some(model) = &self.model {
-            let outputs = model
-                .run(inputs!["images" => input_tensor.view()]?)
-                .map_err(|e| {
-                    error!("Failed to run session: {e}");
-                    anyhow!("Failed to run session: {e}")
-                })?;
-            let output = outputs["output0"]
-                .try_extract_tensor::<f32>()
-                .map_err(|e| {
-                    error!("Failed to extract tensor: {e}");
-                    anyhow!("Failed to extract tensor: {e}")
-                })?
-                .t()
-                .slice(s![.., .., ..])
-                .into_owned();
-
-            trace!("Inference completed successfully.");
-            Ok(output)
-        } else {
-            error!("The ONNX model has not been initialized.");
-            Err(anyhow!("The ONNX model has not been initialized."))
-        }
+        input_tensor
+            .axis_chunks_iter(Axis(0), 1)
+            .par_bridge()
+            .map(|tensor| self.run_inference(tensor))
+            .collect::<Result<Vec<_>>>()
     }
 
     fn process_yolov8_output(&self, output: Array2<f32>, image_size: (u32, u32)) -> Vec<Detection> {
@@ -348,8 +311,7 @@ impl Yolo {
         let _enter = span.enter();
 
         let mut detections = Vec::new();
-
-        for row in output.axis_iter(Axis(0)) {
+        output.axis_iter(Axis(0)).for_each(|row| {
             // Extract bounding box coordinates
             let bbox_x_center = row[0];
             let bbox_y_center = row[1];
@@ -372,9 +334,8 @@ impl Yolo {
                 .unwrap(); // Assuming there's always at least one class
 
             if confidence < self.conf_threshold {
-                continue;
+                return;
             }
-
             let (input_width, input_height) = self.input_size;
             let (image_width, image_height) = image_size;
 
@@ -388,7 +349,7 @@ impl Yolo {
                 confidence,
                 class_id: class_id as u32,
             });
-        }
+        });
 
         trace!("YOLOv8 output processed.");
 
@@ -400,68 +361,19 @@ impl Yolo {
 
     fn process_yolov8_output_batch(
         &self,
-        output: Array3<f32>,
+        output_batch: Vec<Array2<f32>>,
         image_size_batch: Vec<(u32, u32)>,
     ) -> Vec<Vec<Detection>> {
-        let span = span!(Level::TRACE, "Yolo::process_yolov8_output");
+        let span = span!(Level::TRACE, "Yolo::process_yolov8_output_batch");
         let _enter = span.enter();
 
-        let mut batch_detections = Vec::new();
-
-        for (image_output, image_size) in output.axis_iter(Axis(2)).zip(image_size_batch.iter()) {
-            let mut detections = Vec::new();
-
-            for row in image_output.axis_iter(Axis(0)) {
-                // Extract bounding box coordinates
-                let bbox_x_center = row[0];
-                let bbox_y_center = row[1];
-                let bbox_width = row[2];
-                let bbox_height = row[3];
-
-                // Find the class with the highest confidence score
-                let (class_id, confidence) = row
-                    .iter()
-                    .skip(4) // Skip bounding box coordinates
-                    .enumerate()
-                    .map(|(index, value)| (index, *value))
-                    .reduce(|accum, class_confidence_pair| {
-                        if class_confidence_pair.1 > accum.1 {
-                            class_confidence_pair
-                        } else {
-                            accum
-                        }
-                    })
-                    .unwrap(); // Assuming there's always at least one class
-
-                if confidence < self.conf_threshold {
-                    continue;
-                }
-
-                let (input_width, input_height) = self.input_size;
-                let (image_width, image_height) = image_size;
-
-                detections.push(Detection {
-                    bbox: BBox {
-                        x_center: bbox_x_center / (input_width as f32) * (*image_width as f32),
-                        y_center: bbox_y_center / (input_height as f32) * (*image_height as f32),
-                        width: bbox_width / (input_width as f32) * (*image_width as f32),
-                        height: bbox_height / (input_height as f32) * (*image_height as f32),
-                    },
-                    confidence,
-                    class_id: class_id as u32,
-                });
-            }
-
-            trace!("Processed detections for one image in the batch.");
-
-            // Apply Non-Max Suppression per image
-            let final_detections = self.non_max_suppression(detections);
-            trace!("Non-Max Suppression completed for one image.");
-
-            batch_detections.push(final_detections);
-        }
-
-        batch_detections
+        assert_eq!(output_batch.len(), image_size_batch.len());
+        output_batch
+            .into_iter()
+            .zip(image_size_batch.into_iter())
+            .par_bridge()
+            .map(|(output, image_size)| self.process_yolov8_output(output, image_size))
+            .collect::<Vec<_>>()
     }
 
     fn non_max_suppression(&self, mut detections: Vec<Detection>) -> Vec<Detection> {
