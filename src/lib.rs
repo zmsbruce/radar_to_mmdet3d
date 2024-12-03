@@ -58,7 +58,7 @@ pub fn build_model(detector: &mut RobotDetector) -> Result<()> {
     let spinner = ProgressBar::new_spinner();
     spinner.set_style(
         ProgressStyle::default_spinner()
-            .template("{spinner:.green} {msg}")
+            .template("[{elapsed_precise}] {spinner:.green} {msg}")
             .map_err(|e| {
                 error!("Failed to set spinner template: {e}");
                 e
