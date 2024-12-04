@@ -29,7 +29,9 @@ pub struct Locator {
     min_valid_distance_diff: f32,
     max_valid_distance_diff: f32,
     max_depth_map_queue_size: usize,
+    scale_factor: f32,
     zoom_factor: f32,
+    roi_offset: (u32, u32),
     background_depth_map: ImageBuffer<Luma<f32>, Vec<f32>>,
     depth_map_queue: VecDeque<ImageBuffer<Luma<f32>, Vec<f32>>>,
     lidar_to_camera_transform: Matrix4<f32>,
@@ -47,7 +49,9 @@ impl Locator {
         min_valid_distance_diff: f32,
         max_valid_distance_diff: f32,
         max_depth_map_queue_size: usize,
+        scale_factor: f32,
         zoom_factor: f32,
+        roi_offset: (u32, u32),
         lidar_to_camera_transform: Matrix4<f32>,
         camera_intrinsic: Matrix3<f32>,
     ) -> Result<Self> {
@@ -95,7 +99,9 @@ impl Locator {
             min_valid_distance_diff,
             max_valid_distance_diff,
             max_depth_map_queue_size,
+            scale_factor,
             zoom_factor,
+            roi_offset,
             background_depth_map: ImageBuffer::default(),
             depth_map_queue: VecDeque::with_capacity(max_depth_map_queue_size),
             lidar_to_camera_transform,
@@ -156,7 +162,9 @@ impl Locator {
             locator_config.min_valid_distance_diff,
             locator_config.max_valid_distance_diff,
             locator_config.max_depth_map_queue_size,
+            locator_config.scale_factor,
             locator_config.zoom_factor,
+            instance_config.roi_offset.into(),
             Matrix4::from_row_slice(&instance_config.lidar_to_camera),
             Matrix3::from_row_slice(&instance_config.intrinsic),
         )
@@ -388,22 +396,23 @@ impl Locator {
             .iter()
             .map(|bbox| {
                 let mut category_pixels: HashMap<isize, Vec<(u32, u32)>> = HashMap::new();
-                let (x_min, x_max, y_min, y_max) = (
-                    ((bbox.x_center - bbox.width / 2.0).max(0.0).floor() * self.zoom_factor) as u32,
-                    ((bbox.x_center + bbox.width / 2.0).ceil() * self.zoom_factor) as u32,
-                    ((bbox.y_center - bbox.height / 2.0).max(0.0).floor() * self.zoom_factor)
-                        as u32,
-                    ((bbox.y_center + bbox.height / 2.0).ceil() * self.zoom_factor) as u32,
-                );
 
-                for y in y_min..=y_max {
-                    if y >= image_height {
-                        break;
-                    }
-                    for x in x_min..=x_max {
-                        if x >= image_width {
-                            break;
-                        }
+                let x_min =
+                    (bbox.x_center - bbox.width * self.scale_factor * 0.5) * self.zoom_factor;
+                let x_max =
+                    (bbox.x_center + bbox.width * self.scale_factor * 0.5) * self.zoom_factor;
+                let y_min =
+                    (bbox.y_center - bbox.height * self.scale_factor * 0.5) * self.zoom_factor;
+                let y_max =
+                    (bbox.y_center + bbox.height * self.scale_factor * 0.5) * self.zoom_factor;
+
+                let x_min = (x_min + self.roi_offset.0 as f32).max(0.0) as u32;
+                let x_max = (x_max + self.roi_offset.0 as f32).min(image_width as f32) as u32;
+                let y_min = (y_min + self.roi_offset.1 as f32).max(0.0) as u32;
+                let y_max = (y_max + self.roi_offset.1 as f32).max(image_height as f32) as u32;
+
+                for y in y_min..y_max {
+                    for x in x_min..x_max {
                         if let Some(&category) = cluster_result.get(&(x, y)) {
                             category_pixels
                                 .entry(category)
@@ -502,6 +511,8 @@ mod tests {
             100.0,
             4,
             1.0,
+            1.0,
+            (0, 0),
             lidar_to_camera_transform,
             camera_intrinsic,
         )
@@ -528,6 +539,8 @@ mod tests {
             100.0,
             4,
             1.0,
+            1.0,
+            (0, 0),
             lidar_to_camera_transform,
             camera_intrinsic,
         )

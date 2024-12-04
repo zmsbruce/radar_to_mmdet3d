@@ -13,8 +13,8 @@ execution = "TensorRT"
 
 [locate]
 
-cluster_epsilon = 300
-cluster_min_points = 10
+cluster_epsilon = 200
+cluster_min_points = 5
 
 min_valid_distance = 200
 max_valid_distance = 29300
@@ -26,6 +26,8 @@ max_depth_map_queue_size = 4
 
 # 减小 zoom 系数会加快处理速度，但可能降低定位精度
 zoom_factor = 0.5
+
+scale_factor = 0.8
 
 [[instances]]
 name = "Left"
@@ -58,6 +60,7 @@ lidar_to_camera = [
     0.0,
     1.0,
 ]
+roi_offset = [0, 8]
 
 
 [[instances]]
@@ -91,6 +94,7 @@ lidar_to_camera = [
     0.0,
     1.0,
 ]
+roi_offset = [0, 15]
 
 [[instances]]
 name = "Right"
@@ -123,3 +127,4 @@ lidar_to_camera = [
     0.0,
     1.0,
 ]
+roi_offset = [0, 8]

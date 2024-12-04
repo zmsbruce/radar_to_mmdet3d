@@ -32,6 +32,7 @@ pub struct LocatorConfig {
     pub max_valid_distance_diff: f32,
     pub max_depth_map_queue_size: usize,
     pub zoom_factor: f32,
+    pub scale_factor: f32,
 }
 
 #[derive(Debug, Deserialize)]
@@ -39,6 +40,7 @@ pub struct RadarInstanceConfig {
     pub name: String,
     pub intrinsic: [f32; 9],
     pub lidar_to_camera: [f32; 16],
+    pub roi_offset: [u32; 2],
 }
 
 impl RadarConfig {
