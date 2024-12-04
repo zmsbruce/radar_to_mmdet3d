@@ -8,7 +8,7 @@ use radar_to_mmdet3d::{
     config::{RadarConfig, SourceConfig},
     create_output_dirs, locate_and_save_results, process_and_save_aligned_frames,
     radar::{detect::RobotDetector, locate::Locator},
-    save_calibs,
+    save_calibs, set_output_dir_name,
 };
 use tracing::{error, span, Level};
 use tracing_subscriber::{fmt, layer::SubscriberExt, util::SubscriberInitExt, EnvFilter, Layer};
@@ -28,8 +28,10 @@ fn main() -> Result<()> {
         e
     })?;
 
+    let output_dir = set_output_dir_name(&source_config.output_dir_path)?;
+
     let num_videos = aligner.video_num();
-    create_output_dirs(&source_config.output_dir_path, num_videos).map_err(|e| {
+    create_output_dirs(output_dir.as_str(), num_videos).map_err(|e| {
         error!("Failed to create output directories: {e}");
         e
     })?;
@@ -38,7 +40,7 @@ fn main() -> Result<()> {
         error!("Failed to load radar configuration: {e}");
         e
     })?;
-    save_calibs(&radar_config.instances, &source_config.output_dir_path).map_err(|e| {
+    save_calibs(&radar_config.instances, output_dir.as_str()).map_err(|e| {
         error!("Failed to save calibs: {e}");
         e
     })?;
@@ -72,7 +74,7 @@ fn main() -> Result<()> {
         &mut aligner,
         &detector,
         &mut locators,
-        &source_config.output_dir_path,
+        output_dir.as_str(),
     )
     .map_err(|e| {
         error!("Failed process and save frames: {e}");
@@ -83,7 +85,7 @@ fn main() -> Result<()> {
         detect_result,
         &mut aligner,
         &mut locators,
-        &source_config.output_dir_path,
+        output_dir.as_str(),
     )
     .map_err(|e| {
         error!("Failed to locate and save results: {e}");

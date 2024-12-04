@@ -2,11 +2,11 @@ use std::{
     collections::HashMap, 
     fs::{self, File}, 
     io::{BufWriter, Write as _}, 
-    path::PathBuf
+    path::PathBuf,
 };
 
 use align::FrameAligner;
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 use config::RadarInstanceConfig;
 use image::GenericImageView;
 use indicatif::{ProgressBar, ProgressStyle};
@@ -16,7 +16,7 @@ use radar::{
     locate::Locator,
 };
 use rayon::prelude::*;
-use tracing::{error, warn};
+use tracing::{error, info, warn};
 
 pub mod align;
 pub mod config;
@@ -52,6 +52,29 @@ pub fn create_output_dirs(root_dir: &str, image_num: usize) -> Result<()> {
     })?;
 
     Ok(())
+}
+
+pub fn set_output_dir_name(root_dir: &str) -> Result<String> {
+    match fs::exists(root_dir) {
+        Ok(exist) => {
+            if !exist {
+                info!("Output directory is set to {root_dir}");
+                return Ok(root_dir.to_string());
+            }
+            let counter = 0;
+            loop {
+                let root_dir_renamed = format!("{}{}", root_dir, counter);
+                if !fs::exists(&root_dir_renamed).unwrap() {
+                    info!("Output directory is set to {root_dir_renamed}");
+                    return Ok(root_dir_renamed);
+                }
+            }
+        }
+        Err(e) => {
+            error!("Failed to query path existance of {root_dir}: {e}");
+            return Err(anyhow!(format!("Failed to query path existance of {root_dir}: {e}")));
+        }
+    }
 }
 
 pub fn build_model(detector: &mut RobotDetector) -> Result<()> {
