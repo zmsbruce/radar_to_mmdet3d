@@ -67,10 +67,6 @@ fn expand_cluster<T, const D: usize>(
     let mut queue = VecDeque::from(neighbors);
 
     while let Some(current_idx) = queue.pop_front() {
-        if labels[current_idx] == -2 {
-            labels[current_idx] = cluster_id;
-        }
-
         if labels[current_idx] != -1 {
             continue;
         }
@@ -95,7 +91,12 @@ where
     let mut neighbors = Vec::new();
 
     for (i, point) in points.iter().enumerate() {
-        if euclidean_distance(&points[point_idx], point) <= eps {
+        if i == point_idx {
+            continue;
+        }
+
+        let distance = euclidean_distance(&points[point_idx], point);
+        if distance <= eps {
             neighbors.push(i);
         }
     }

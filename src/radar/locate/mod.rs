@@ -6,9 +6,8 @@ use nalgebra::{Matrix3, Matrix4, Point3, Vector3, Vector4};
 use rayon::prelude::*;
 use tracing::{debug, error, span, trace, Level};
 
-use crate::config::{LocatorConfig, RadarInstanceConfig};
-
 use super::detect::{BBox, RobotDetection};
+use crate::config::{LocatorConfig, RadarInstanceConfig};
 use cluster::dbscan;
 
 mod cluster;
@@ -138,13 +137,9 @@ impl Locator {
         trace!("Getting robot depth map");
         let robot_depth_map = self.get_robot_depth_map(points);
 
-        trace!("Clustering and mapping categories.");
-        let pixels_category_mapping = self.cluster_and_get_category(&robot_depth_map);
-
         trace!("Searching for robot location");
         let bboxes: Vec<_> = detections.iter().map(|det| det.bbox()).collect();
-        let robot_locations =
-            self.search_for_location(&bboxes, robot_depth_map, pixels_category_mapping);
+        let robot_locations = self.search_for_location(&bboxes, &robot_depth_map);
 
         debug!("Robot locations found: {:?}", robot_locations);
         Ok(robot_locations)
@@ -334,54 +329,10 @@ impl Locator {
         difference_depth_map
     }
 
-    fn cluster_and_get_category(
-        &self,
-        difference_depth_map: &ImageBuffer<Luma<f32>, Vec<f32>>,
-    ) -> HashMap<(u32, u32), isize> {
-        let span = span!(Level::TRACE, "Locator::cluster_and_get_category");
-        let _enter = span.enter();
-
-        debug!("Clustering depth map into categories");
-        let image_points: Vec<_> = difference_depth_map
-            .enumerate_pixels()
-            .par_bridge()
-            .filter_map(|(x, y, pixel)| {
-                let depth = pixel.0[0];
-                if depth.is_normal() {
-                    Some((x, y, depth))
-                } else {
-                    None
-                }
-            })
-            .collect();
-
-        let lidar_points: Vec<Point3<f32>> = image_points
-            .iter()
-            .map(|(x, y, depth)| {
-                let image_point = Point3::new(*x as f32, *y as f32, *depth);
-                let lidar_point = self.image_to_lidar(&image_point);
-                lidar_point
-            })
-            .collect();
-
-        let categories = dbscan(&lidar_points, self.cluster_epsilon, self.cluster_min_points);
-
-        let mut mapping = HashMap::with_capacity(categories.len());
-        image_points
-            .into_iter()
-            .zip(categories.into_iter())
-            .for_each(|((pixel_x, pixel_y, _depth), category)| {
-                mapping.insert((pixel_x, pixel_y), category);
-            });
-
-        mapping
-    }
-
     fn search_for_location(
         &self,
         bboxes: &[BBox],
-        difference_depth_map: ImageBuffer<Luma<f32>, Vec<f32>>,
-        cluster_result: HashMap<(u32, u32), isize>,
+        difference_depth_map: &ImageBuffer<Luma<f32>, Vec<f32>>,
     ) -> Vec<Option<RobotLocation>> {
         let span = span!(Level::TRACE, "Locator::search_for_location");
         let _enter = span.enter();
@@ -395,8 +346,6 @@ impl Locator {
         bboxes
             .iter()
             .map(|bbox| {
-                let mut category_pixels: HashMap<isize, Vec<(u32, u32)>> = HashMap::new();
-
                 let x_min =
                     (bbox.x_center - bbox.width * self.scale_factor * 0.5) * self.zoom_factor;
                 let x_max =
@@ -409,83 +358,107 @@ impl Locator {
                 let x_min = (x_min + self.roi_offset.0 as f32).max(0.0) as u32;
                 let x_max = (x_max + self.roi_offset.0 as f32).min(image_width as f32) as u32;
                 let y_min = (y_min + self.roi_offset.1 as f32).max(0.0) as u32;
-                let y_max = (y_max + self.roi_offset.1 as f32).max(image_height as f32) as u32;
+                let y_max = (y_max + self.roi_offset.1 as f32).min(image_height as f32) as u32;
 
+                let size = ((y_max - y_min) * (x_max - x_min)) as usize;
+                let mut image_points = Vec::with_capacity(size);
+                let mut lidar_points = Vec::with_capacity(size);
                 for y in y_min..y_max {
                     for x in x_min..x_max {
-                        if let Some(&category) = cluster_result.get(&(x, y)) {
-                            category_pixels
-                                .entry(category)
-                                .or_insert_with(Vec::new)
-                                .push((x, y));
+                        let depth = difference_depth_map.get_pixel(x, y).0[0];
+                        if depth.is_normal() {
+                            let image_point = Point3::new(x as f32, y as f32, depth);
+                            lidar_points.push(self.image_to_lidar(&image_point));
+                            image_points.push(image_point);
                         }
                     }
                 }
 
-                if let Some((_, pixels)) = category_pixels
+                let categories =
+                    dbscan(&lidar_points, self.cluster_epsilon, self.cluster_min_points);
+
+                let mut category_mapping: HashMap<isize, Vec<Point3<f32>>> =
+                    HashMap::with_capacity(size);
+                image_points
+                    .into_iter()
+                    .zip(categories.into_iter())
+                    .for_each(|(image_point, category)| {
+                        category_mapping
+                            .entry(category)
+                            .or_insert_with(Vec::new)
+                            .push(image_point);
+                    });
+                debug!("Category of pixels: {:?}", category_mapping);
+
+                let pixels = if let Some((category, pixels)) = category_mapping
                     .iter()
+                    .filter(|(category, _pixels)| **category != -2)
                     .max_by_key(|&(_, pixels)| pixels.len())
                 {
-                    let (sum_point, count, min_max) = pixels
-                        .iter()
-                        .filter_map(|&(x, y)| {
-                            let depth = difference_depth_map.get_pixel(x, y).0[0];
-                            if depth.is_normal() {
-                                let image_point = Point3::new(x as f32, y as f32, depth);
-                                let lidar_point = self.image_to_lidar(&image_point);
-                                Some(lidar_point)
-                            } else {
-                                None
-                            }
-                        })
-                        .fold(
-                            (
-                                Point3::<f32>::new(0.0, 0.0, 0.0),
-                                0,
-                                (
-                                    Point3::<f32>::new(f32::MAX, f32::MAX, f32::MAX),
-                                    Point3::<f32>::new(f32::MIN, f32::MIN, f32::MIN),
-                                ),
-                            ),
-                            |(sum, cnt, (min_point, max_point)), point| {
-                                (
-                                    Point3::new(sum.x + point.x, sum.y + point.y, sum.z + point.z),
-                                    cnt + 1,
-                                    (
-                                        Point3::new(
-                                            min_point.x.min(point.x),
-                                            min_point.y.min(point.y),
-                                            min_point.z.min(point.z),
-                                        ),
-                                        Point3::new(
-                                            max_point.x.max(point.x),
-                                            max_point.y.max(point.y),
-                                            max_point.z.max(point.z),
-                                        ),
-                                    ),
-                                )
-                            },
-                        );
-
-                    if count > 0 {
-                        let robot_location = RobotLocation {
-                            center: Point3::new(
-                                sum_point.x / count as f32,
-                                sum_point.y / count as f32,
-                                sum_point.z / count as f32,
-                            ),
-                            width: min_max.1.y - min_max.0.y,
-                            height: min_max.1.z - min_max.0.z,
-                            depth: min_max.1.x - min_max.0.x,
-                        };
-
-                        Some(robot_location)
-                    } else {
-                        None
-                    }
+                    trace!("Category {category} selected for location");
+                    pixels
                 } else {
-                    None
-                }
+                    trace!("No selected category");
+                    if category_mapping.is_empty() {
+                        trace!("Category is empty, will return None");
+                        return None;
+                    }
+
+                    trace!("Category is noise, will return average of points");
+                    category_mapping.get(&-2).unwrap()
+                };
+
+                debug!("Pixels: {:?}", pixels);
+                let (sum_point, count, min_point, max_point) = pixels
+                    .iter()
+                    .filter_map(|image_point| {
+                        if image_point.z.is_normal() {
+                            let lidar_point = self.image_to_lidar(&image_point);
+                            Some(lidar_point)
+                        } else {
+                            None
+                        }
+                    })
+                    .fold(
+                        (
+                            Point3::<f32>::new(0.0, 0.0, 0.0),
+                            0,
+                            Point3::<f32>::new(f32::MAX, f32::MAX, f32::MAX),
+                            Point3::<f32>::new(f32::MIN, f32::MIN, f32::MIN),
+                        ),
+                        |(sum, cnt, min_point, max_point), point| {
+                            (
+                                Point3::new(sum.x + point.x, sum.y + point.y, sum.z + point.z),
+                                cnt + 1,
+                                Point3::new(
+                                    min_point.x.min(point.x),
+                                    min_point.y.min(point.y),
+                                    min_point.z.min(point.z),
+                                ),
+                                Point3::new(
+                                    max_point.x.max(point.x),
+                                    max_point.y.max(point.y),
+                                    max_point.z.max(point.z),
+                                ),
+                            )
+                        },
+                    );
+
+                assert_ne!(count, 0);
+
+                let robot_location = RobotLocation {
+                    center: Point3::new(
+                        sum_point.x / count as f32,
+                        sum_point.y / count as f32,
+                        sum_point.z / count as f32,
+                    ),
+                    width: max_point.y - min_point.y,
+                    height: max_point.z - min_point.z,
+                    depth: max_point.x - min_point.x,
+                };
+
+                debug!("robot location is {:?}", robot_location);
+                Some(robot_location)
             })
             .collect()
     }
