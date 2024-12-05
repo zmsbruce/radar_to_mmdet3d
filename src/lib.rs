@@ -61,13 +61,14 @@ pub fn set_output_dir_name(root_dir: &str) -> Result<String> {
                 info!("Output directory is set to {root_dir}");
                 return Ok(root_dir.to_string());
             }
-            let counter = 0;
+            let mut counter = 0;
             loop {
                 let root_dir_renamed = format!("{}{}", root_dir, counter);
                 if !fs::exists(&root_dir_renamed).unwrap() {
                     info!("Output directory is set to {root_dir_renamed}");
                     return Ok(root_dir_renamed);
                 }
+                counter += 1;
             }
         }
         Err(e) => {
