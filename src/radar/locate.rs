@@ -1,6 +1,7 @@
-use std::collections::{HashMap, VecDeque};
+use std::collections::HashMap;
 
 use anyhow::{anyhow, Result};
+use dbscan::Classification;
 use image::{ImageBuffer, Luma};
 use nalgebra::{Matrix3, Matrix4, Point3, Vector3, Vector4};
 use rayon::prelude::*;
@@ -8,9 +9,6 @@ use tracing::{debug, error, span, trace, Level};
 
 use super::detect::{BBox, RobotDetection};
 use crate::config::{LocatorConfig, RadarInstanceConfig};
-use cluster::dbscan;
-
-mod cluster;
 
 #[derive(Debug)]
 pub struct RobotLocation {
@@ -27,12 +25,10 @@ pub struct Locator {
     max_valid_distance: f32,
     min_valid_distance_diff: f32,
     max_valid_distance_diff: f32,
-    max_depth_map_queue_size: usize,
     scale_factor: f32,
     zoom_factor: f32,
     roi_offset: (u32, u32),
     background_depth_map: ImageBuffer<Luma<f32>, Vec<f32>>,
-    depth_map_queue: VecDeque<ImageBuffer<Luma<f32>, Vec<f32>>>,
     lidar_to_camera_transform: Matrix4<f32>,
     camera_to_lidar_transform: Matrix4<f32>,
     camera_intrinsic: Matrix3<f32>,
@@ -47,7 +43,6 @@ impl Locator {
         max_valid_distance: f32,
         min_valid_distance_diff: f32,
         max_valid_distance_diff: f32,
-        max_depth_map_queue_size: usize,
         scale_factor: f32,
         zoom_factor: f32,
         roi_offset: (u32, u32),
@@ -97,12 +92,10 @@ impl Locator {
             max_valid_distance,
             min_valid_distance_diff,
             max_valid_distance_diff,
-            max_depth_map_queue_size,
             scale_factor,
             zoom_factor,
             roi_offset,
             background_depth_map: ImageBuffer::default(),
-            depth_map_queue: VecDeque::with_capacity(max_depth_map_queue_size),
             lidar_to_camera_transform,
             camera_to_lidar_transform,
             camera_intrinsic,
@@ -156,7 +149,6 @@ impl Locator {
             locator_config.max_valid_distance,
             locator_config.min_valid_distance_diff,
             locator_config.max_valid_distance_diff,
-            locator_config.max_depth_map_queue_size,
             locator_config.scale_factor,
             locator_config.zoom_factor,
             instance_config.roi_offset.into(),
@@ -300,31 +292,26 @@ impl Locator {
             let (u, v, depth) = point;
             depth_map.put_pixel(u, v, Luma([depth]));
         });
-        self.depth_map_queue.push_back(depth_map);
-        if self.depth_map_queue.len() > self.max_depth_map_queue_size {
-            self.depth_map_queue.pop_front();
-        }
 
         let mut difference_depth_map: ImageBuffer<Luma<f32>, Vec<f32>> =
             ImageBuffer::new(image_width, image_height);
-        self.depth_map_queue.iter().for_each(|depth_map| {
-            difference_depth_map
-                .iter_mut()
-                .zip(depth_map.iter())
-                .zip(self.background_depth_map.iter())
-                .par_bridge()
-                .for_each(|((diff_depth, depth), background_depth)| {
-                    if !depth.is_normal() {
-                        return;
-                    }
-                    let difference = background_depth - depth;
-                    if difference > self.min_valid_distance_diff
-                        && difference < self.max_valid_distance_diff
-                    {
-                        *diff_depth = difference;
-                    }
-                });
-        });
+
+        difference_depth_map
+            .iter_mut()
+            .zip(depth_map.into_iter())
+            .zip(self.background_depth_map.iter())
+            .par_bridge()
+            .for_each(|((diff_depth, depth), background_depth)| {
+                if !depth.is_normal() || !background_depth.is_normal() {
+                    return;
+                }
+                let difference = background_depth - depth;
+                if difference > self.min_valid_distance_diff
+                    && difference < self.max_valid_distance_diff
+                {
+                    *diff_depth = difference;
+                }
+            });
 
         difference_depth_map
     }
@@ -360,55 +347,59 @@ impl Locator {
                 let y_min = (y_min + self.roi_offset.1 as f32).max(0.0) as u32;
                 let y_max = (y_max + self.roi_offset.1 as f32).min(image_height as f32) as u32;
 
+                debug!("BBox: ({x_min}, {y_min})~({x_max}, {y_max})");
+
                 let size = ((y_max - y_min) * (x_max - x_min)) as usize;
                 let mut image_points = Vec::with_capacity(size);
                 let mut lidar_points = Vec::with_capacity(size);
                 for y in y_min..y_max {
                     for x in x_min..x_max {
                         let depth = difference_depth_map.get_pixel(x, y).0[0];
-                        if depth.is_normal() {
+                        if depth > self.min_valid_distance && depth < self.max_valid_distance {
+                            debug!("x: {x}, y: {y}, depth: {depth}");
                             let image_point = Point3::new(x as f32, y as f32, depth);
-                            lidar_points.push(self.image_to_lidar(&image_point));
+                            let lidar_point = self.image_to_lidar(&image_point);
+                            lidar_points.push(vec![lidar_point.x, lidar_point.y, lidar_point.z]);
                             image_points.push(image_point);
                         }
                     }
                 }
 
-                let categories =
-                    dbscan(&lidar_points, self.cluster_epsilon, self.cluster_min_points);
+                let dbscan_model =
+                    dbscan::Model::new(self.cluster_epsilon as f64, self.cluster_min_points);
+                let categories = dbscan_model.run(&lidar_points);
 
-                let mut category_mapping: HashMap<isize, Vec<Point3<f32>>> =
+                let mut category_mapping: HashMap<usize, Vec<Point3<f32>>> =
                     HashMap::with_capacity(size);
-                image_points
-                    .into_iter()
-                    .zip(categories.into_iter())
-                    .for_each(|(image_point, category)| {
-                        category_mapping
-                            .entry(category)
-                            .or_insert_with(Vec::new)
-                            .push(image_point);
-                    });
+                image_points.iter().zip(categories.into_iter()).for_each(
+                    |(image_point, category)| {
+                        if let Classification::Core(category) = category {
+                            category_mapping
+                                .entry(category)
+                                .or_insert_with(Vec::new)
+                                .push(*image_point);
+                        }
+                    },
+                );
                 debug!("Category of pixels: {:?}", category_mapping);
 
                 let pixels = if let Some((category, pixels)) = category_mapping
                     .iter()
-                    .filter(|(category, _pixels)| **category != -2)
                     .max_by_key(|&(_, pixels)| pixels.len())
                 {
                     trace!("Category {category} selected for location");
                     pixels
                 } else {
-                    trace!("No selected category");
-                    if category_mapping.is_empty() {
-                        trace!("Category is empty, will return None");
-                        return None;
-                    }
-
-                    trace!("Category is noise, will return average of points");
-                    category_mapping.get(&-2).unwrap()
+                    trace!("No category selected, will return average of points");
+                    &image_points
                 };
 
                 debug!("Pixels: {:?}", pixels);
+
+                if pixels.is_empty() {
+                    return None;
+                }
+
                 let (sum_point, count, min_point, max_point) = pixels
                     .iter()
                     .filter_map(|image_point| {
@@ -443,8 +434,6 @@ impl Locator {
                             )
                         },
                     );
-
-                assert_ne!(count, 0);
 
                 let robot_location = RobotLocation {
                     center: Point3::new(
@@ -482,7 +471,6 @@ mod tests {
             100.0,
             0.1,
             100.0,
-            4,
             1.0,
             1.0,
             (0, 0),
@@ -510,7 +498,6 @@ mod tests {
             100.0,
             0.1,
             100.0,
-            4,
             1.0,
             1.0,
             (0, 0),
