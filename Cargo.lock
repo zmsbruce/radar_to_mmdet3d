@@ -350,6 +350,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "dbscan"
+version = "0.3.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9654109c8a07c62a71b9d443e72dde6c6e1364a9e8654126be122c58919d8a85"
+
+[[package]]
 name = "digest"
 version = "0.10.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1382,6 +1388,7 @@ dependencies = [
  "anyhow",
  "assert_approx_eq",
  "chrono",
+ "dbscan",
  "ffmpeg-next",
  "hdf5",
  "image",
