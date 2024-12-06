@@ -7,7 +7,6 @@ use ort::{
     inputs, CUDAExecutionProvider, GraphOptimizationLevel, OpenVINOExecutionProvider, Session,
     TensorRTExecutionProvider,
 };
-use rayon::iter::{IntoParallelRefIterator, ParallelBridge, ParallelIterator};
 use tracing::{debug, error, span, trace, warn, Level};
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -142,8 +141,8 @@ impl Yolo {
         Ok(())
     }
 
-    pub fn infer_single_image(&self, image: &DynamicImage) -> Result<Vec<Detection>> {
-        let span = span!(Level::TRACE, "Yolo::infer_single_image");
+    pub fn infer(&self, image: &DynamicImage) -> Result<Vec<Detection>> {
+        let span = span!(Level::TRACE, "Yolo::infer");
         let _enter = span.enter();
 
         trace!("Starting inference single image.");
@@ -167,42 +166,6 @@ impl Yolo {
         trace!(
             "Processed YOLOv8 output, number of detections: {}",
             detections.len()
-        );
-
-        Ok(detections)
-    }
-
-    pub fn infer_image_batch(&self, image_batch: &[DynamicImage]) -> Result<Vec<Vec<Detection>>> {
-        let span = span!(Level::TRACE, "Yolo::infer_image_batch");
-        let _enter = span.enter();
-
-        trace!("Starting inference image batch.");
-
-        if image_batch.is_empty() {
-            trace!("Image batch is empty, return empty result.");
-            return Ok(Vec::new());
-        }
-
-        let (input_tensor, original_dims) =
-            self.preprocess_images_batch(image_batch).map_err(|e| {
-                error!("Failed to preprocess image batch: {e}");
-                anyhow!("Failed to preprocess image batch: {e}")
-            })?;
-        trace!(
-            "Images preprocessed with original dimensions = {:?}",
-            original_dims
-        );
-
-        let model_output = self.run_inference_batch(input_tensor).map_err(|e| {
-            error!("Failed to run inference: {e}");
-            anyhow!("Failed to run inference: {e}")
-        })?;
-        trace!("Inference completed, raw model output received.");
-
-        let detections = self.process_yolov8_output_batch(model_output, original_dims);
-        trace!(
-            "Processed YOLOv8 output, number of detections: {:?}",
-            detections.iter().map(|det| det.len()).collect::<Vec<_>>()
         );
 
         Ok(detections)
@@ -236,45 +199,6 @@ impl Yolo {
         Ok((input, original_dims))
     }
 
-    fn preprocess_images_batch(
-        &self,
-        images: &[DynamicImage],
-    ) -> Result<(Array4<f32>, Vec<(u32, u32)>)> {
-        let span = span!(Level::TRACE, "Yolo::preprocess_images");
-        let _enter = span.enter();
-
-        let batch_size = images.len();
-
-        let (width, height) = self.input_size;
-
-        trace!("Resizing images to {}x{}", width, height);
-
-        let mut input = Array4::<f32>::zeros((batch_size, 3, height as usize, width as usize));
-
-        let original_dims: Vec<_> = images.par_iter().map(|image| image.dimensions()).collect();
-
-        input
-            .axis_chunks_iter_mut(Axis(0), 1)
-            .zip(images.iter())
-            .par_bridge()
-            .for_each(|(mut chunk, image)| {
-                let resized_img = image.resize_exact(width, height, FilterType::Nearest);
-                let binding = resized_img.as_flat_samples_u8().unwrap();
-                let samples = binding.as_slice();
-
-                for (i, pixel) in samples.chunks(3).enumerate() {
-                    let x = i % width as usize;
-                    let y = i / width as usize;
-
-                    chunk[[0, 0, y, x]] = pixel[0] as f32 / 255.0;
-                    chunk[[0, 1, y, x]] = pixel[1] as f32 / 255.0;
-                    chunk[[0, 2, y, x]] = pixel[2] as f32 / 255.0;
-                }
-            });
-
-        Ok((input, original_dims))
-    }
-
     fn run_inference(&self, input_tensor: ArrayView4<f32>) -> Result<Array2<f32>> {
         let span = span!(Level::TRACE, "Yolo::run_inference");
         let _enter = span.enter();
@@ -293,17 +217,6 @@ impl Yolo {
             error!("The ONNX model has not been initialized.");
             Err(anyhow!("The ONNX model has not been initialized."))
         }
-    }
-
-    fn run_inference_batch(&self, input_tensor: Array4<f32>) -> Result<Vec<Array2<f32>>> {
-        let span = span!(Level::TRACE, "Yolo::run_inference_batch");
-        let _enter = span.enter();
-
-        input_tensor
-            .axis_chunks_iter(Axis(0), 1)
-            .par_bridge()
-            .map(|tensor| self.run_inference(tensor))
-            .collect::<Result<Vec<_>>>()
     }
 
     fn process_yolov8_output(&self, output: Array2<f32>, image_size: (u32, u32)) -> Vec<Detection> {
@@ -359,23 +272,6 @@ impl Yolo {
         final_detections
     }
 
-    fn process_yolov8_output_batch(
-        &self,
-        output_batch: Vec<Array2<f32>>,
-        image_size_batch: Vec<(u32, u32)>,
-    ) -> Vec<Vec<Detection>> {
-        let span = span!(Level::TRACE, "Yolo::process_yolov8_output_batch");
-        let _enter = span.enter();
-
-        assert_eq!(output_batch.len(), image_size_batch.len());
-        output_batch
-            .into_iter()
-            .zip(image_size_batch.into_iter())
-            .par_bridge()
-            .map(|(output, image_size)| self.process_yolov8_output(output, image_size))
-            .collect::<Vec<_>>()
-    }
-
     fn non_max_suppression(&self, mut detections: Vec<Detection>) -> Vec<Detection> {
         let span = span!(Level::TRACE, "Yolo::non_max_suppression");
         let _enter = span.enter();
@@ -394,7 +290,7 @@ impl Yolo {
             });
         }
 
-        debug!("Detections: {:#?}.", final_detections);
+        debug!("Detections: {:?}.", final_detections);
         final_detections
     }
 
@@ -656,36 +552,14 @@ mod tests {
     }
 
     #[test]
-    fn test_yolo_single_image() -> Result<()> {
+    fn test_yolo() -> Result<()> {
         let mut yolo = Yolo::new("assets/test/yolov8n.onnx", 0.5, 0.75, (640, 640));
         yolo.build(Execution::CPU)?;
 
         let img = image::open(PathBuf::from_str("assets/test/zidane.jpg")?)?;
-        let detections = yolo.infer_single_image(&img)?;
+        let detections = yolo.infer(&img)?;
 
         assert!(detections.len() > 0);
-
-        Ok(())
-    }
-
-    #[test]
-    fn test_yolo_image_batch() -> Result<()> {
-        let mut yolo = Yolo::new("assets/test/yolov8n.onnx", 0.5, 0.75, (640, 640));
-        yolo.build(Execution::CPU)?;
-
-        let mut images = Vec::new();
-        let image_zidane = image::open(PathBuf::from_str("assets/test/zidane.jpg")?)?;
-        let image_bus = image::open(PathBuf::from_str("assets/test/bus.jpg")?)?;
-
-        images.push(image_bus);
-        images.push(image_zidane);
-
-        let detections = yolo.infer_image_batch(&images)?;
-
-        assert_eq!(detections.len(), 2);
-
-        assert!(detections[0].len() > 0);
-        assert!(detections[1].len() > 0);
 
         Ok(())
     }

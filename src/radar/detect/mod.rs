@@ -237,7 +237,7 @@ impl RobotDetector {
         }
 
         trace!("Running car detector inference...");
-        let car_detections = self.car_detector.infer_single_image(image).map_err(|e| {
+        let car_detections = self.car_detector.infer(image).map_err(|e| {
             error!("Failed to infer camera image in car detector: {e}");
             anyhow!("Failed to infer camera image in car detector: {e}")
         })?;
@@ -267,9 +267,10 @@ impl RobotDetector {
             .collect();
 
         trace!("Running armor detector inference on cropped car images...");
-        let armor_detections = self
-            .armor_detector
-            .infer_image_batch(&car_images)
+        let armor_detections = car_images
+            .into_iter()
+            .map(|car_image| self.armor_detector.infer(&car_image))
+            .collect::<Result<Vec<_>, _>>()
             .map_err(|e| {
                 error!("Failed to infer car images in armor detector: {e}");
                 anyhow!("Failed to infer car images in armor detector: {e}")
@@ -294,12 +295,14 @@ impl RobotDetector {
                 i,
                 armor_det.len()
             );
+            debug!(
+                "Car detection: {:?}, armor detection: {:?}",
+                car_det, armor_det
+            );
             if let Some(robot_det) = RobotDetection::new(car_det, armor_det) {
                 debug!(
                     "Car {} classified as label {:?} with confidence {}.",
-                    i + 1,
-                    robot_det.label,
-                    robot_det.confidence
+                    i, robot_det.label, robot_det.confidence
                 );
                 if let Some(robot_det_exist) = robots_map.get(&robot_det.label) {
                     if robot_det_exist.confidence < robot_det.confidence {
@@ -317,12 +320,12 @@ impl RobotDetector {
                     robots_map.insert(robot_det.label, robot_det);
                 }
             } else {
-                trace!("No valid robot detection for car {}.", i + 1);
+                trace!("No valid robot detection for car {}.", i);
             }
         }
 
         let robots: Vec<_> = robots_map.into_iter().map(|(_k, v)| v).collect();
-        debug!("Detection complete. Robots: {:#?}.", robots);
+        debug!("Detection complete. Robots: {:?}.", robots);
 
         Ok(robots)
     }
