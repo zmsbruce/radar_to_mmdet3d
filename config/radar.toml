@@ -13,21 +13,19 @@ execution = "TensorRT"
 
 [locate]
 
-cluster_epsilon = 300
-cluster_min_points = 3
+cluster_epsilon = 400
+cluster_min_points = 4
 
-min_valid_distance = 200
+min_valid_distance = 500
 max_valid_distance = 29300
 
-min_valid_distance_diff = 200
-max_valid_distance_diff = 8000
-
-max_depth_map_queue_size = 3
+min_valid_distance_diff = 100
+max_valid_distance_diff = 10000
 
 # 减小 zoom 系数会加快处理速度，但可能降低定位精度
 zoom_factor = 0.5
 
-scale_factor = 1.2
+scale_factor = 0.85
 
 [[instances]]
 name = "Left"
